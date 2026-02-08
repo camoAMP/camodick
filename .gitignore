@@ -10,6 +10,8 @@ node_modules/
 .next/
 .env
 .env*.local
+# Other env/token files (never commit secrets)
+*.env
 .DS_Store
 
 # Local videos for Camfordick (avoid committing large media files)
