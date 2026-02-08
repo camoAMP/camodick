@@ -24,8 +24,8 @@ fi
 
 TUNNEL_PID=""
 if [[ -n "${CLOUDFLARED}" ]]; then
-  echo "[camodick] starting cloudflared tunnel '${TUNNEL_NAME}' ..."
-  "${CLOUDFLARED}" tunnel run "${TUNNEL_NAME}" &
+  echo "[camodick] starting cloudflared tunnel '${TUNNEL_NAME}' -> http://127.0.0.1:${PORT} ..."
+  "${CLOUDFLARED}" tunnel run --url "http://127.0.0.1:${PORT}" "${TUNNEL_NAME}" &
   TUNNEL_PID="$!"
 else
   echo "[camodick] cloudflared not found; tunnel not started (LAN-only)." >&2
@@ -45,4 +45,3 @@ if [[ -n "${TUNNEL_PID}" ]]; then
 else
   wait "${SERVER_PID}"
 fi
-
