@@ -39,6 +39,21 @@ is_port_listening() {
     return $?
   fi
 
+  # /proc fallback: detect listeners even if the port is bound to a non-loopback IP.
+  # Works on Linux without extra tools.
+  local port_hex
+  port_hex="$(printf '%04X' "${PORT}")"
+  if [[ -r /proc/net/tcp ]]; then
+    if awk -v p=":${port_hex}" 'NR>1 && $4=="0A" && $2 ~ p { found=1; exit } END { exit(found?0:1) }' /proc/net/tcp; then
+      return 0
+    fi
+  fi
+  if [[ -r /proc/net/tcp6 ]]; then
+    if awk -v p=":${port_hex}" 'NR>1 && $4=="0A" && $2 ~ p { found=1; exit } END { exit(found?0:1) }' /proc/net/tcp6; then
+      return 0
+    fi
+  fi
+
   # Fallback: bash TCP connect probe
   (echo >/dev/tcp/127.0.0.1/"${PORT}") >/dev/null 2>&1
 }
