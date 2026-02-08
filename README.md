@@ -40,6 +40,12 @@ If you already created a named tunnel `camodick` in Cloudflare, you can start ev
 bash scripts/run-public.sh
 ```
 
+If your tunnel is in a different Cloudflare account than your current `cloudflared` login (common when you have multiple accounts/zones), you can run using a **tunnel token** (copy it from Cloudflare Zero Trust -> Networks -> Tunnels -> your tunnel):
+
+```bash
+TUNNEL_TOKEN="paste-your-tunnel-token-here" bash scripts/run-public.sh
+```
+
 ## Use Your Own Domain (Cloudflare Tunnel)
 
 If you want users to simply open your domain with no server setup UI:
@@ -70,6 +76,19 @@ cloudflared tunnel run camodick
 ```
 
 Once that’s active, users just open your domain and sign in.
+
+## Troubleshooting
+
+- `error code: 1033` on your domain:
+  - Your hostname is routed to a Cloudflare Tunnel, but Cloudflare can’t see a connector online for that tunnel.
+  - Fix: make sure your server is running (`curl http://127.0.0.1:5173/api/info`), then run the tunnel **from the same Cloudflare account that owns the domain**, using either:
+    - The exact `cloudflared tunnel run --token ... --url http://127.0.0.1:5173` command shown in the Zero Trust dashboard, or
+    - `cloudflared tunnel login` (pick the correct domain), then `cloudflared tunnel run <tunnel-name>`.
+- `A DNS record managed by Workers already exists on that host`:
+  - You have a Workers/Pages custom domain or a `Worker` DNS record on that hostname. Remove it (or use a different hostname) before routing the hostname to a Tunnel.
+- `EADDRINUSE: address already in use 0.0.0.0:5173`:
+  - Something is already using port `5173`. Stop it, or run with a new port:
+    - `PORT=5174 bash scripts/run-public.sh`
 
 ## Admin Login
 

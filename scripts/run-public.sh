@@ -7,8 +7,16 @@ cd "$ROOT"
 PORT="${PORT:-5173}"
 HOST="${HOST:-0.0.0.0}"
 TUNNEL_NAME="${TUNNEL_NAME:-camodick}"
+# Optional: run a tunnel from a Cloudflare dashboard token, without needing `cloudflared tunnel login`.
+# Prefer token-file to keep the token out of `ps` output.
+TUNNEL_TOKEN="${TUNNEL_TOKEN:-}"
+TUNNEL_TOKEN_FILE="${TUNNEL_TOKEN_FILE:-}"
+if [[ -n "${TUNNEL_TOKEN}" && -z "${TUNNEL_TOKEN_FILE}" ]]; then
+  TUNNEL_TOKEN_FILE="$ROOT/.camfordick-data/tunnel-token.txt"
+fi
 
 mkdir -p videos
+mkdir -p .camfordick-data
 
 SERVER_PID=""
 TUNNEL_PID=""
@@ -75,13 +83,38 @@ if [[ -z "${CLOUDFLARED}" ]]; then
 fi
 
 if [[ -n "${CLOUDFLARED}" ]]; then
-  if command -v pgrep >/dev/null 2>&1 && pgrep -f "cloudflared tunnel run.*\\b${TUNNEL_NAME}\\b" >/dev/null 2>&1; then
-    echo "[camodick] cloudflared tunnel '${TUNNEL_NAME}' already running"
+  if [[ -n "${TUNNEL_TOKEN_FILE}" ]]; then
+    if [[ -n "${TUNNEL_TOKEN}" ]]; then
+      # 0600 token file (best-effort) so the secret isn't exposed via process args.
+      umask 177
+      printf "%s" "${TUNNEL_TOKEN}" >"${TUNNEL_TOKEN_FILE}"
+      chmod 600 "${TUNNEL_TOKEN_FILE}" 2>/dev/null || true
+    fi
+
+    if [[ ! -s "${TUNNEL_TOKEN_FILE}" ]]; then
+      echo "[camodick] ERROR: TUNNEL_TOKEN_FILE is set but the file is missing/empty: ${TUNNEL_TOKEN_FILE}" >&2
+      echo "[camodick] Provide the token via env var, for example:" >&2
+      echo "[camodick]   TUNNEL_TOKEN='...' bash scripts/run-public.sh" >&2
+      exit 1
+    fi
+
+    if command -v pgrep >/dev/null 2>&1 && pgrep -f "${TUNNEL_TOKEN_FILE}" >/dev/null 2>&1; then
+      echo "[camodick] cloudflared tunnel (token-file) already running"
+    else
+      echo "[camodick] starting cloudflared tunnel (token-file) -> ${SERVER_BASE} ..."
+      "${CLOUDFLARED}" tunnel run --token-file "${TUNNEL_TOKEN_FILE}" --url "${SERVER_BASE}" &
+      TUNNEL_PID="$!"
+      STARTED_TUNNEL=1
+    fi
   else
-    echo "[camodick] starting cloudflared tunnel '${TUNNEL_NAME}' -> ${SERVER_BASE} ..."
-    "${CLOUDFLARED}" tunnel run --url "${SERVER_BASE}" "${TUNNEL_NAME}" &
-    TUNNEL_PID="$!"
-    STARTED_TUNNEL=1
+    if command -v pgrep >/dev/null 2>&1 && pgrep -f "cloudflared tunnel run.*\\b${TUNNEL_NAME}\\b" >/dev/null 2>&1; then
+      echo "[camodick] cloudflared tunnel '${TUNNEL_NAME}' already running"
+    else
+      echo "[camodick] starting cloudflared tunnel '${TUNNEL_NAME}' -> ${SERVER_BASE} ..."
+      "${CLOUDFLARED}" tunnel run --url "${SERVER_BASE}" "${TUNNEL_NAME}" &
+      TUNNEL_PID="$!"
+      STARTED_TUNNEL=1
+    fi
   fi
 else
   echo "[camodick] cloudflared not found; tunnel not started (LAN-only)." >&2
