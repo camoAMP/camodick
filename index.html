@@ -90,10 +90,18 @@
     </style>
   </head>
 
-  <body class="min-h-screen text-zinc-100 antialiased">
-    <div class="mx-auto w-full max-w-[1400px] px-4 pb-16 pt-8">
-      <header class="rounded-2xl border border-white/10 bg-panel/60 p-5 glow-panel">
-        <div class="flex flex-wrap items-center justify-between gap-3">
+	  <body class="min-h-screen text-zinc-100 antialiased">
+	    <button
+	      id="cornerAdminBtn"
+	      class="neon-btn fixed right-4 top-4 z-50 rounded-full border border-white/10 bg-black/40 px-4 py-2 font-display text-xs font-semibold tracking-wide text-white/90 backdrop-blur transition will-change-transform"
+	      type="button"
+	      title="Admin / Settings"
+	    >
+	      Admin
+	    </button>
+	    <div class="mx-auto w-full max-w-[1400px] px-4 pb-16 pt-8">
+	      <header class="rounded-2xl border border-white/10 bg-panel/60 p-5 glow-panel">
+	        <div id="brandRow" class="hidden flex flex-wrap items-center justify-between gap-3">
           <div class="flex items-center gap-3">
             <div
               class="h-10 w-10 rounded-xl border border-white/10 bg-gradient-to-br from-neonP/30 via-neonX/15 to-neonT/25"
@@ -119,7 +127,7 @@
           </div>
         </div>
 
-	        <div class="mt-4 flex flex-wrap items-center gap-2">
+		        <div id="folderControlsRow" class="mt-4 hidden flex flex-wrap items-center gap-2">
 	          <button
 	            id="selectFolderBtn"
             class="neon-btn rounded-xl bg-gradient-to-r from-neonP/70 to-neonX/60 px-4 py-2 font-display text-sm font-semibold tracking-wide text-white transition will-change-transform"
@@ -163,7 +171,7 @@
 	          </button>
 	        </div>
 
-	        <div class="mt-3 flex flex-wrap items-end gap-2">
+		        <div id="serverConnectRow" class="mt-3 hidden flex flex-wrap items-end gap-2">
 	          <div class="min-w-[260px] flex-1">
 	            <label for="serverUrlInput" class="block text-[11px] text-zinc-400">PC Server URL (HTTPS)</label>
 	            <input
@@ -214,7 +222,7 @@
 	        </div>
 
           <div id="authRow" class="mt-3 flex flex-wrap items-end gap-2">
-            <div class="min-w-[160px]">
+	            <div id="authUserWrap" class="min-w-[160px]">
               <label for="authUserInput" class="block text-[11px] text-zinc-400">Username</label>
               <input
                 id="authUserInput"
@@ -224,7 +232,7 @@
               />
             </div>
 
-            <div class="min-w-[200px] flex-1">
+	            <div id="authPassWrap" class="min-w-[200px] flex-1">
               <label for="authPassInput" class="block text-[11px] text-zinc-400">Password</label>
               <input
                 id="authPassInput"
@@ -262,7 +270,7 @@
               Sign Out
             </button>
 
-            <div class="ml-auto flex flex-wrap items-center gap-2 text-xs">
+	            <div id="authMetaWrap" class="ml-auto hidden flex flex-wrap items-center gap-2 text-xs">
               <span
                 id="authPill"
                 class="rounded-full border border-white/10 bg-black/30 px-3 py-1 font-mono text-[11px] text-zinc-200/90"
@@ -273,12 +281,17 @@
                 class="hidden rounded-full border border-white/10 bg-black/30 px-3 py-1 font-mono text-[11px] text-zinc-200/90"
                 >Unlocked: <span id="creditsText" class="text-zinc-100">0/0</span></span
               >
-            </div>
-          </div>
+	            </div>
+	          </div>
 
-          <div
-            id="adminPanel"
-            class="mt-3 hidden rounded-2xl border border-white/10 bg-black/20 p-4 text-xs text-zinc-200/90"
+	          <div class="mt-2">
+	            <div id="authErrorText" class="font-mono text-xs text-rose-400"></div>
+	            <div id="authStatusText" class="mt-1 font-mono text-[11px] text-zinc-400"></div>
+	          </div>
+
+	          <div
+	            id="adminPanel"
+	            class="mt-3 hidden rounded-2xl border border-white/10 bg-black/20 p-4 text-xs text-zinc-200/90"
           >
             <div class="mb-2 font-display text-sm font-semibold tracking-wide text-white/90">Admin: Set Quota</div>
             <div class="flex flex-wrap items-end gap-2">
@@ -379,7 +392,7 @@
             </div>
           </div>
 
-	        <div class="mt-4 grid grid-cols-1 gap-2 text-xs text-zinc-300/90 sm:grid-cols-2 lg:grid-cols-4">
+		        <div id="statsRow" class="mt-4 hidden grid grid-cols-1 gap-2 text-xs text-zinc-300/90 sm:grid-cols-2 lg:grid-cols-4">
 	          <div class="rounded-xl border border-white/10 bg-black/20 px-3 py-2">
 	            <div class="text-zinc-400">Folder</div>
 	            <div id="folderName" class="mt-0.5 truncate font-mono text-zinc-100">None</div>
@@ -404,8 +417,8 @@
         </div>
       </header>
 
-      <main class="mt-7 flex flex-col items-center gap-7">
-        <section class="w-[92vw] max-w-[1200px] md:w-[70vw]">
+	      <main id="mainContent" class="mt-7 hidden flex flex-col items-center gap-7">
+	        <section id="playerSection" class="hidden w-[92vw] max-w-[1200px] md:w-[70vw]">
           <div class="rounded-2xl border border-white/10 bg-black/30 glow-panel">
             <div id="playerShell" class="relative overflow-hidden rounded-2xl">
               <div class="aspect-video bg-black">
@@ -474,13 +487,13 @@
 
         <section class="w-[92vw] max-w-[1200px] md:w-[70vw]">
           <div class="mb-3 flex flex-wrap items-center justify-between gap-2">
-            <h2 class="font-display text-lg font-semibold tracking-wide">Library</h2>
+	            <h2 class="font-display text-lg font-semibold tracking-wide">Gallery</h2>
             <div class="text-xs text-zinc-400">
               Auto-rescan: <span id="autoRescanLabel" class="font-mono text-zinc-200">15s</span>
             </div>
           </div>
 
-          <div id="grid" class="grid grid-cols-2 gap-4 sm:grid-cols-3 lg:grid-cols-5"></div>
+	          <div id="grid" class="grid grid-cols-1 gap-6 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4"></div>
 
           <div
             id="emptyState"
@@ -517,9 +530,12 @@
 
       const state = {
         mode: /** @type {"local" | "server" | "auto"} */ ("auto"),
+        view: /** @type {"landing" | "gallery"} */ ("landing"),
+        cornerOpen: false,
         serverInfo: null, // from /api/info
         serverBase: "", // e.g. https://xxxx.trycloudflare.com (empty => same origin)
         serverToken: "",
+        contentToken: "",
         authToken: "",
         me: null, // from /api/me or /api/videos summary
         dirHandle: null,
@@ -540,6 +556,18 @@
       };
 
       const el = {
+        cornerAdminBtn: document.getElementById("cornerAdminBtn"),
+        brandRow: document.getElementById("brandRow"),
+        folderControlsRow: document.getElementById("folderControlsRow"),
+        serverConnectRow: document.getElementById("serverConnectRow"),
+        statsRow: document.getElementById("statsRow"),
+        mainContent: document.getElementById("mainContent"),
+        playerSection: document.getElementById("playerSection"),
+        authUserWrap: document.getElementById("authUserWrap"),
+        authPassWrap: document.getElementById("authPassWrap"),
+        authMetaWrap: document.getElementById("authMetaWrap"),
+        authErrorText: document.getElementById("authErrorText"),
+        authStatusText: document.getElementById("authStatusText"),
         supportPill: document.getElementById("supportPill"),
         selectFolderBtn: document.getElementById("selectFolderBtn"),
         refreshBtn: document.getElementById("refreshBtn"),
@@ -658,11 +686,21 @@
       }
 
       function setStatus(msg) {
-        el.statusText.textContent = msg || "";
+        const s = msg || "";
+        el.statusText.textContent = s;
+        el.authStatusText.textContent = s;
       }
 
       function setError(msg) {
-        el.errorText.textContent = msg || "";
+        const s = msg || "";
+        if (state.view === "landing") {
+          el.authErrorText.textContent = s;
+          el.errorText.textContent = "";
+          return;
+        }
+
+        el.authErrorText.textContent = "";
+        el.errorText.textContent = s;
       }
 
       function setFolderName(msg) {
@@ -681,31 +719,74 @@
         el.adminMsg.textContent = msg || "";
       }
 
+      function hasGalleryAccess() {
+        if (state.mode === "server") return !!(state.me || state.serverToken || state.contentToken);
+        if (state.mode === "local") return !!state.dirHandle;
+        return false;
+      }
+
+      function setCornerUi() {
+        const show = !!state.cornerOpen;
+        el.folderControlsRow.classList.toggle("hidden", !show);
+        el.serverConnectRow.classList.toggle("hidden", !show);
+        el.statsRow.classList.toggle("hidden", !show);
+
+        const isAdmin = state.me && String(state.me.role) === "admin";
+        el.adminPanel.classList.toggle("hidden", !(show && isAdmin));
+        el.contentTokensPanel.classList.toggle("hidden", !(show && isAdmin));
+      }
+
+      function setViewUi() {
+        const canView = hasGalleryAccess();
+        state.view = canView ? "gallery" : "landing";
+        const landing = state.view === "landing";
+
+        el.mainContent.classList.toggle("hidden", landing);
+        el.brandRow.classList.toggle("hidden", landing);
+        el.authMetaWrap.classList.toggle("hidden", landing);
+
+        // Keep landing as "Sign In / Sign Up" only. Auth status + gallery are shown after access is granted.
+        el.authUserWrap.classList.toggle("hidden", !landing);
+        el.authPassWrap.classList.toggle("hidden", !landing);
+
+        // Show player only after a selection.
+        el.playerSection.classList.toggle("hidden", landing || !state.currentPath);
+
+        setCornerUi();
+      }
+
       function setAuthUi() {
         const usingServer = state.mode === "server";
         const me = state.me;
+        const signupEnabled =
+          !usingServer ||
+          !state.serverInfo ||
+          !state.serverInfo.auth ||
+          state.serverInfo.auth.signupEnabled !== false;
 
         if (!usingServer) {
-          el.authPill.textContent = "Local mode";
+          el.authPill.textContent = state.mode === "local" ? "Local mode" : "Not connected";
           el.signInBtn.classList.remove("hidden");
-          el.signUpBtn.classList.remove("hidden");
+          el.signUpBtn.classList.toggle("hidden", !signupEnabled);
           el.signOutBtn.classList.add("hidden");
           el.creditsPill.classList.add("hidden");
           el.adminPanel.classList.add("hidden");
           el.contentTokensPanel.classList.add("hidden");
           setAdminMsg("");
+          setViewUi();
           return;
         }
 
         if (!me) {
           el.authPill.textContent = "Signed out";
           el.signInBtn.classList.remove("hidden");
-          el.signUpBtn.classList.remove("hidden");
+          el.signUpBtn.classList.toggle("hidden", !signupEnabled);
           el.signOutBtn.classList.add("hidden");
           el.creditsPill.classList.add("hidden");
           el.adminPanel.classList.add("hidden");
           el.contentTokensPanel.classList.add("hidden");
           setAdminMsg("");
+          setViewUi();
           return;
         }
 
@@ -726,8 +807,11 @@
         }
 
         const isAdmin = role === "admin";
-        el.adminPanel.classList.toggle("hidden", !isAdmin);
-        el.contentTokensPanel.classList.toggle("hidden", !isAdmin);
+        // Admin features are behind the "Admin" corner button.
+        el.adminPanel.classList.toggle("hidden", !(isAdmin && state.cornerOpen));
+        el.contentTokensPanel.classList.toggle("hidden", !(isAdmin && state.cornerOpen));
+
+        setViewUi();
       }
 
       function setPlayerActions(entry) {
@@ -944,7 +1028,7 @@
         el.disconnectServerBtn.classList.toggle("opacity-50", !isServer);
       }
 
-      async function connectServer(baseRaw, tokenRaw, { remember = true } = {}) {
+      async function connectServer(baseRaw, tokenRaw, { remember = true, info = null } = {}) {
         setError("");
 
         const base = normalizeServerBase(baseRaw);
@@ -958,8 +1042,8 @@
         el.serverTokenInput.value = token;
         setStatus("Connecting to server…");
 
-        const info = await detectServerInfoAt(base);
-        if (!info) {
+        const detected = info || (await detectServerInfoAt(base));
+        if (!detected) {
           setStatus("Server not reachable");
           setError("Could not reach /api/info on that server URL.");
           return false;
@@ -967,7 +1051,7 @@
 
         resetLibraryState();
         state.mode = "server";
-        state.serverInfo = info;
+        state.serverInfo = detected;
         state.serverBase = base;
         state.serverToken = token;
         state.me = null;
@@ -997,7 +1081,7 @@
 
         renderLibrary();
         const authed = await refreshMe();
-        if (authed || state.serverToken) {
+        if (authed || state.serverToken || state.contentToken) {
           await refreshLibrary({ reason: "startup", toastOnChange: false });
         } else {
           setStatus("Sign in required");
@@ -1012,8 +1096,10 @@
         state.serverInfo = null;
         state.serverBase = "";
         state.serverToken = "";
+        state.contentToken = "";
         state.authToken = "";
         state.me = null;
+        el.serverTokenInput.value = "";
         setSupportPill();
         setServerFormUi();
         setAuthUi();
@@ -1039,6 +1125,7 @@
         const u = new URL(window.location.href);
         u.searchParams.set("server", base);
         u.searchParams.delete("token");
+        u.searchParams.delete("contentToken");
         u.searchParams.delete("auth");
 
         try {
@@ -1052,9 +1139,13 @@
 
       async function ensureConnectedServer() {
         if (state.mode === "server") return true;
+        const origin = window.location.origin;
+        const info = await detectServerInfoAt(origin);
+        if (info) return connectServer(origin, "", { remember: false, info });
+
         const base = normalizeServerBase(el.serverUrlInput.value);
         if (!base) {
-          toast("Enter a PC Server URL first.");
+          toast("Open Admin and set a PC Server URL first.");
           return false;
         }
         return connectServer(base, el.serverTokenInput.value, { remember: true });
@@ -1128,6 +1219,21 @@
 
       function signOut() {
         persistAuthTokenForBase(state.serverBase || window.location.origin, "");
+        state.contentToken = "";
+        state.serverToken = "";
+        el.serverTokenInput.value = "";
+        try {
+          localStorage.removeItem("camfordick_server_token");
+        } catch {
+          // Ignore.
+        }
+        try {
+          const url = new URL(window.location.href);
+          url.searchParams.delete("contentToken");
+          window.history.replaceState(null, "", url.toString());
+        } catch {
+          // Ignore.
+        }
         state.me = null;
         setAuthUi();
         resetLibraryState();
@@ -1582,6 +1688,7 @@
         const base = state.serverBase || window.location.origin;
         const u = new URL(pathname, base);
         if (state.serverToken) u.searchParams.set("token", state.serverToken);
+        if (state.contentToken) u.searchParams.set("contentToken", state.contentToken);
         if (state.authToken) u.searchParams.set("auth", state.authToken);
         return u.toString();
       }
@@ -1830,25 +1937,31 @@
               </svg>
             </div>
           `;
-          preview.appendChild(playBadge);
+	          preview.appendChild(playBadge);
 
-          const label = document.createElement("div");
-          label.className = "px-3 py-2";
+	          const label = document.createElement("div");
+	          label.className = "px-4 py-3";
 
-          const pathEl = document.createElement("div");
-          pathEl.className = "truncate font-mono text-[11px] leading-tight text-zinc-200/90";
-          pathEl.textContent = v.path;
-          pathEl.title = v.path;
+	          const titleEl = document.createElement("div");
+	          titleEl.className = "truncate font-display text-sm font-semibold tracking-wide text-zinc-100";
+	          titleEl.textContent = v.name || v.path;
+	          titleEl.title = v.path;
 
-          const metaEl = document.createElement("div");
-          metaEl.className = "mt-1 flex items-center gap-2 text-[10px] text-zinc-400";
-          const extSpan = document.createElement("span");
-          extSpan.className = "rounded-full border border-white/10 bg-black/30 px-2 py-0.5 font-mono";
-          extSpan.textContent = v.ext;
-          metaEl.appendChild(extSpan);
+	          const pathEl = document.createElement("div");
+	          pathEl.className = "mt-0.5 truncate font-mono text-[11px] leading-tight text-zinc-400/90";
+	          pathEl.textContent = v.path;
+	          pathEl.title = v.path;
 
-          label.appendChild(pathEl);
-          label.appendChild(metaEl);
+	          const metaEl = document.createElement("div");
+	          metaEl.className = "mt-2 flex items-center gap-2 text-[11px] text-zinc-400";
+	          const extSpan = document.createElement("span");
+	          extSpan.className = "rounded-full border border-white/10 bg-black/30 px-2 py-0.5 font-mono";
+	          extSpan.textContent = v.ext;
+	          metaEl.appendChild(extSpan);
+
+	          label.appendChild(titleEl);
+	          label.appendChild(pathEl);
+	          label.appendChild(metaEl);
 
           btn.appendChild(preview);
           btn.appendChild(label);
@@ -1866,6 +1979,7 @@
         state.currentIsPreview = false;
         el.nowPlaying.textContent = path;
         setPlayerActions(entry);
+        setViewUi();
 
         try {
           let url;
@@ -1894,6 +2008,11 @@
           el.player.src = url;
           el.player.load();
           if (state.streamOn) await el.player.play();
+          try {
+            el.playerSection.scrollIntoView({ behavior: "smooth", block: "start" });
+          } catch {
+            // Ignore.
+          }
         } catch (err) {
           console.error(err);
           setError((err && err.message) || String(err));
@@ -1944,7 +2063,31 @@
             if (err.status === 401) {
               setError("Sign in required");
               state.me = null;
+              const hadAuth = !!state.authToken;
+              const hadLegacy = !!state.serverToken;
+              const hadContent = !!state.contentToken;
+
               if (state.authToken) persistAuthTokenForBase(state.serverBase || window.location.origin, "");
+              if (state.serverToken) {
+                state.serverToken = "";
+                el.serverTokenInput.value = "";
+                try {
+                  localStorage.removeItem("camfordick_server_token");
+                } catch {
+                  // Ignore.
+                }
+              }
+              // If content token is the only possible auth and it failed, clear it.
+              if (hadContent && !hadAuth && !hadLegacy) {
+                state.contentToken = "";
+                try {
+                  const url = new URL(window.location.href);
+                  url.searchParams.delete("contentToken");
+                  window.history.replaceState(null, "", url.toString());
+                } catch {
+                  // Ignore.
+                }
+              }
               setAuthUi();
             } else {
               setError((err && err.message) || String(err));
@@ -1965,6 +2108,10 @@
         renderLibrary();
 
         // Event listeners
+        el.cornerAdminBtn.addEventListener("click", () => {
+          state.cornerOpen = !state.cornerOpen;
+          setAuthUi();
+        });
         el.selectFolderBtn.addEventListener("click", selectFolder);
         el.refreshBtn.addEventListener("click", () => refreshLibrary({ reason: "manual", toastOnChange: true }));
         el.streamToggleBtn.addEventListener("click", () => {
@@ -2030,31 +2177,45 @@
 
         // Auto-refresh library
         setInterval(() => {
-          if (state.mode === "server" && state.me) {
+          if (state.mode === "server" && (state.me || state.serverToken || state.contentToken)) {
             refreshLibrary({ reason: "auto", toastOnChange: false });
           }
         }, state.autoRescanMs);
 
-        // Try to restore server connection from URL params
+        // Try to restore server connection from URL params (or same-origin server).
         const u = new URL(window.location);
         const serverParam = u.searchParams.get("server");
         const tokenParam = u.searchParams.get("token");
+        const contentTokenParam = u.searchParams.get("contentToken");
+        if (contentTokenParam) state.contentToken = String(contentTokenParam || "").trim();
+
+        let attemptedServer = false;
         if (serverParam) {
-          // Don't await to avoid blocking UI
+          attemptedServer = true;
           connectServer(serverParam, tokenParam || "", { remember: false });
         } else {
-          // Try to restore last used server
-          try {
-            const base = localStorage.getItem("camfordick_server_base") || "";
-            const token = localStorage.getItem("camfordick_server_token") || "";
-            if (base) connectServer(base, token, { remember: false });
-          } catch {
-            // Ignore.
+          // If index.html is served by `server.js`, auto-connect to this origin.
+          const originInfo = await detectServerInfoAt(window.location.origin);
+          if (originInfo) {
+            attemptedServer = true;
+            connectServer(window.location.origin, "", { remember: false, info: originInfo });
+          } else {
+            // Try to restore last used server
+            try {
+              const base = localStorage.getItem("camfordick_server_base") || "";
+              const token = localStorage.getItem("camfordick_server_token") || "";
+              if (base) {
+                attemptedServer = true;
+                connectServer(base, token, { remember: false });
+              }
+            } catch {
+              // Ignore.
+            }
           }
         }
 
-        // Try to restore folder handle
-        tryRestoreFolderHandle();
+        // Local folder mode (optional). Skip if we already connected to a server.
+        if (!attemptedServer) tryRestoreFolderHandle();
       })();
     </script>
   </body>
