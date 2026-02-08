@@ -1,0 +1,15 @@
+# Prevent wrangler "assets" deploys from accidentally uploading repo internals.
+.git/
+.github/
+.wrangler/
+
+# Not part of the static UI
+server.js
+videos/
+.camfordick-data/
+.camfordick-cache/
+
+# Local/editor
+.vscode/
+node_modules/
+*.log
