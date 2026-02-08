@@ -34,6 +34,41 @@ The server prints local URLs. For remote viewers you need an HTTPS public URL (n
 - Admin can set a **quota (videos)** for each user.
 - Locked videos show **thumbnails** and a **10s preview**; users must **unlock** to watch/download full.
 
+## Content Access Tokens (New Feature)
+
+As an admin user, you can now create **content access tokens** for specific users or groups. Each token provides access to a designated set of videos with configurable limits:
+
+- **Token Name**: A descriptive name for the token (e.g. "User 1", "Family Access", etc.)
+- **Max Uses**: Number of times the token can be used before expiring
+- **Valid Until**: Optional expiration date for the token
+- **Allowed Videos**: Optionally restrict the token to specific videos (leave empty for access to all videos)
+
+### Creating Content Access Tokens
+
+1. Log in as an admin user
+2. Navigate to the "Content Access Tokens" section in the admin panel
+3. Fill in the token details (name, max uses, validity period)
+4. Optionally select specific videos to grant access to
+5. Click "Create Token" to generate a unique token
+
+### Using Content Access Tokens
+
+To share access with the token:
+1. Copy the generated token URL
+2. Distribute this URL to the intended recipients
+3. The recipients can use this link to access the designated content without needing individual accounts
+
+## Anti-Piracy Measures
+
+The system includes several measures to prevent unauthorized content distribution:
+
+- **Screen Recording Prevention**: Content Security Policy (CSP) headers prevent embedding videos in iframes on other sites
+- **Direct Download Protection**: Videos can only be accessed through the application interface
+- **Session Tracking**: All video access is logged server-side for monitoring
+- **Time-Limited Access**: Content access tokens can be configured with expiration dates
+- **Usage Limits**: Tokens have configurable usage limits that prevent unlimited access
+- **User Agent Verification**: Server tracks user agents to detect unusual access patterns
+
 ## Make It Reachable From The Internet (HTTPS)
 
 GitHub Pages is HTTPS, so your PC server must also be reachable via **HTTPS** (otherwise browsers block it).
@@ -47,12 +82,12 @@ Example (Cloudflare quick tunnel):
 cloudflared tunnel --url http://127.0.0.1:5173
 ```
 
-It prints an `https://xxxx.trycloudflare.com` URL. Use that in the UI as the “PC Server URL”.
+It prints an `https://xxxx.trycloudflare.com` URL. Use that in the UI as the "PC Server URL".
 
 ## GitHub Pages Setup
 
 1. Push this repo to GitHub (at minimum: `index.html`, `server.js`, `.gitignore`).
-2. In GitHub: Settings -> Pages -> “Deploy from a branch”
+2. In GitHub: Settings -> Pages -> "Deploy from a branch"
 3. Select branch: `main` and folder: `/ (root)`
 4. Your UI will be available at your GitHub Pages URL.
 

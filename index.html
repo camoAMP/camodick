@@ -316,6 +316,67 @@
               </button>
               <div id="adminMsg" class="min-w-[240px] flex-1 font-mono text-[11px] text-zinc-300/90"></div>
             </div>
+            
+            <!-- Content Access Tokens Admin Panel -->
+            <div id="contentTokensPanel" class="mt-4 hidden">
+              <div class="mb-2 font-display text-sm font-semibold tracking-wide text-white/90">Content Access Tokens</div>
+              <div class="flex flex-wrap items-end gap-2">
+                <div class="min-w-[180px] flex-1">
+                  <label for="tokenNameInput" class="block text-[11px] text-zinc-400">Token Name</label>
+                  <input
+                    id="tokenNameInput"
+                    type="text"
+                    class="mt-1 w-full rounded-xl border border-white/10 bg-black/30 px-3 py-2 font-mono text-xs text-zinc-100 outline-none ring-0 focus:border-white/20 focus:bg-black/40"
+                    placeholder="e.g. User 1, User 2, etc."
+                  />
+                </div>
+                <div class="w-[160px]">
+                  <label for="tokenMaxUsesInput" class="block text-[11px] text-zinc-400">Max Uses</label>
+                  <input
+                    id="tokenMaxUsesInput"
+                    type="number"
+                    min="1"
+                    step="1"
+                    class="mt-1 w-full rounded-xl border border-white/10 bg-black/30 px-3 py-2 font-mono text-xs text-zinc-100 outline-none ring-0 focus:border-white/20 focus:bg-black/40"
+                    placeholder="Number of times token can be used"
+                  />
+                </div>
+                <div class="w-[160px]">
+                  <label for="tokenValidUntilInput" class="block text-[11px] text-zinc-400">Valid Until (Optional)</label>
+                  <input
+                    id="tokenValidUntilInput"
+                    type="date"
+                    class="mt-1 w-full rounded-xl border border-white/10 bg-black/30 px-3 py-2 font-mono text-xs text-zinc-100 outline-none ring-0 focus:border-white/20 focus:bg-black/40"
+                  />
+                </div>
+                <button
+                  id="createTokenBtn"
+                  class="neon-btn rounded-xl bg-gradient-to-r from-violet-600/70 to-emerald-500/60 px-4 py-2 font-display text-sm font-semibold tracking-wide text-white transition will-change-transform"
+                  type="button"
+                >
+                  Create Token
+                </button>
+                <button
+                  id="refreshTokensBtn"
+                  class="neon-btn rounded-xl border border-white/10 bg-black/30 px-4 py-2 font-display text-sm font-semibold tracking-wide text-white/90 transition will-change-transform"
+                  type="button"
+                >
+                  Refresh Tokens
+                </button>
+              </div>
+              
+              <div class="mt-3">
+                <label class="block text-[11px] text-zinc-400">Videos to Allow (Optional - leave empty for all)</label>
+                <div id="videoSelectionContainer" class="max-h-40 overflow-y-auto border border-white/10 rounded-lg mt-1 p-2 bg-black/20">
+                  <!-- Videos will be populated here -->
+                </div>
+              </div>
+              
+              <div id="tokenList" class="mt-4">
+                <div class="font-display text-sm font-semibold tracking-wide text-white/90 mb-2">Active Tokens</div>
+                <!-- Token list will be populated here -->
+              </div>
+            </div>
           </div>
 
 	        <div class="mt-4 grid grid-cols-1 gap-2 text-xs text-zinc-300/90 sm:grid-cols-2 lg:grid-cols-4">
@@ -474,6 +535,8 @@
         toastTimer: null,
         thumbObserver: null,
         adminUsers: [],
+        contentTokens: [],
+        allVideos: []
       };
 
       const el = {
@@ -497,11 +560,19 @@
         creditsPill: document.getElementById("creditsPill"),
         creditsText: document.getElementById("creditsText"),
         adminPanel: document.getElementById("adminPanel"),
+        contentTokensPanel: document.getElementById("contentTokensPanel"),
         adminUserSelect: document.getElementById("adminUserSelect"),
         adminQuotaInput: document.getElementById("adminQuotaInput"),
         adminSetQuotaBtn: document.getElementById("adminSetQuotaBtn"),
         adminRefreshUsersBtn: document.getElementById("adminRefreshUsersBtn"),
         adminMsg: document.getElementById("adminMsg"),
+        tokenNameInput: document.getElementById("tokenNameInput"),
+        tokenMaxUsesInput: document.getElementById("tokenMaxUsesInput"),
+        tokenValidUntilInput: document.getElementById("tokenValidUntilInput"),
+        createTokenBtn: document.getElementById("createTokenBtn"),
+        refreshTokensBtn: document.getElementById("refreshTokensBtn"),
+        videoSelectionContainer: document.getElementById("videoSelectionContainer"),
+        tokenList: document.getElementById("tokenList"),
         folderName: document.getElementById("folderName"),
         statusText: document.getElementById("statusText"),
         videoCount: document.getElementById("videoCount"),
@@ -621,6 +692,7 @@
           el.signOutBtn.classList.add("hidden");
           el.creditsPill.classList.add("hidden");
           el.adminPanel.classList.add("hidden");
+          el.contentTokensPanel.classList.add("hidden");
           setAdminMsg("");
           return;
         }
@@ -632,6 +704,7 @@
           el.signOutBtn.classList.add("hidden");
           el.creditsPill.classList.add("hidden");
           el.adminPanel.classList.add("hidden");
+          el.contentTokensPanel.classList.add("hidden");
           setAdminMsg("");
           return;
         }
@@ -652,7 +725,9 @@
           el.creditsText.textContent = `${u}/${q}`;
         }
 
-        el.adminPanel.classList.toggle("hidden", role !== "admin");
+        const isAdmin = role === "admin";
+        el.adminPanel.classList.toggle("hidden", !isAdmin);
+        el.contentTokensPanel.classList.toggle("hidden", !isAdmin);
       }
 
       function setPlayerActions(entry) {
@@ -1294,14 +1369,212 @@
             role: String(j.user.role || ""),
             quota: typeof j.user.quota === "number" ? j.user.quota : 0,
             unlockedCount: typeof j.user.unlockedCount === "number" ? j.user.unlockedCount : 0,
+            contentTokens: Array.isArray(j.user.contentTokens) ? j.user.contentTokens : []
           };
           setAuthUi();
-          if (String(state.me.role) === "admin") refreshAdminUsers().catch(() => {});
+          if (String(state.me.role) === "admin") {
+            refreshAdminUsers().catch(() => {});
+            refreshContentTokens().catch(() => {});
+            populateVideoSelection().catch(() => {});
+          }
           return true;
         } catch {
           state.me = null;
           setAuthUi();
           return false;
+        }
+      }
+
+      // Content Access Token Functions
+      async function refreshContentTokens() {
+        if (!state.me || String(state.me.role) !== "admin") {
+          state.contentTokens = [];
+          el.tokenList.innerHTML = "";
+          return;
+        }
+        
+        try {
+          const j = await apiJson("/api/content-tokens");
+          const tokens = Array.isArray(j.contentTokens) ? j.contentTokens : [];
+          state.contentTokens = tokens;
+          
+          // Render tokens
+          el.tokenList.innerHTML = "";
+          if (tokens.length === 0) {
+            const emptyDiv = document.createElement("div");
+            emptyDiv.className = "text-sm text-zinc-400 py-2";
+            emptyDiv.textContent = "No content access tokens created yet.";
+            el.tokenList.appendChild(emptyDiv);
+            return;
+          }
+          
+          for (const token of tokens) {
+            const tokenEl = document.createElement("div");
+            tokenEl.className = "rounded-lg border border-white/10 bg-black/20 p-3 mb-2 flex flex-wrap items-center justify-between";
+            
+            const tokenInfo = document.createElement("div");
+            tokenInfo.innerHTML = `
+              <div class="font-mono text-sm">${token.name}</div>
+              <div class="text-xs text-zinc-400">
+                Max uses: ${token.currentUses}/${token.maxUses} | 
+                Valid until: ${token.validUntil ? new Date(token.validUntil).toLocaleDateString() : 'Never expires'} |
+                Created: ${new Date(token.createdAt).toLocaleDateString()}
+              </div>
+            `;
+            
+            const tokenActions = document.createElement("div");
+            tokenActions.className = "flex gap-2";
+            
+            // Copy token button
+            const copyBtn = document.createElement("button");
+            copyBtn.className = "neon-btn rounded-xl border border-white/10 bg-black/30 px-3 py-1 font-display text-xs font-semibold tracking-wide text-white/90 transition will-change-transform";
+            copyBtn.textContent = "Copy";
+            copyBtn.onclick = () => {
+              const tokenUrl = `${window.location.origin}?server=${encodeURIComponent(state.serverBase)}&contentToken=${encodeURIComponent(token.token)}`;
+              navigator.clipboard.writeText(tokenUrl).then(() => {
+                toast("Token link copied to clipboard!");
+              });
+            };
+            
+            // Delete token button
+            const deleteBtn = document.createElement("button");
+            deleteBtn.className = "neon-btn rounded-xl border border-white/10 bg-rose-900/50 px-3 py-1 font-display text-xs font-semibold tracking-wide text-rose-200/90 transition will-change-transform";
+            deleteBtn.textContent = "Delete";
+            deleteBtn.onclick = () => deleteContentToken(token.id);
+            
+            tokenActions.appendChild(copyBtn);
+            tokenActions.appendChild(deleteBtn);
+            
+            tokenEl.appendChild(tokenInfo);
+            tokenEl.appendChild(tokenActions);
+            
+            el.tokenList.appendChild(tokenEl);
+          }
+        } catch (err) {
+          console.error(err);
+          setAdminMsg(`Failed to load tokens: ${(err && err.message) || String(err)}`);
+        }
+      }
+
+      async function createContentToken() {
+        if (!state.me || String(state.me.role) !== "admin") return;
+        
+        const name = el.tokenNameInput.value.trim();
+        const maxUses = parseInt(el.tokenMaxUsesInput.value);
+        const validUntil = el.tokenValidUntilInput.value;
+        
+        if (!name || isNaN(maxUses) || maxUses <= 0) {
+          toast("Please enter a token name and valid max uses (> 0)");
+          return;
+        }
+        
+        // Get selected videos
+        const selectedVideos = [];
+        const checkboxes = el.videoSelectionContainer.querySelectorAll('input[type="checkbox"]:checked');
+        for (const checkbox of checkboxes) {
+          selectedVideos.push(checkbox.value);
+        }
+        
+        try {
+          const body = {
+            name,
+            maxUses,
+            validUntil: validUntil || null,
+            allowedVideos: selectedVideos.length > 0 ? selectedVideos : null
+          };
+          
+          const j = await apiJson("/api/content-tokens", { method: "POST", body });
+          toast(`Token "${j.name}" created successfully!`);
+          
+          // Reset form
+          el.tokenNameInput.value = "";
+          el.tokenMaxUsesInput.value = "";
+          el.tokenValidUntilInput.value = "";
+          
+          // Deselect all videos
+          const allCheckboxes = el.videoSelectionContainer.querySelectorAll('input[type="checkbox"]');
+          for (const checkbox of allCheckboxes) {
+            checkbox.checked = false;
+          }
+          
+          // Refresh the token list
+          refreshContentTokens();
+        } catch (err) {
+          console.error(err);
+          toast(`Failed to create token: ${(err && err.message) || String(err)}`);
+        }
+      }
+
+      async function deleteContentToken(tokenId) {
+        if (!confirm("Are you sure you want to delete this token? This action cannot be undone.")) {
+          return;
+        }
+        
+        try {
+          await apiJson("/api/content-tokens/delete", { method: "POST", body: { tokenId } });
+          toast("Token deleted successfully!");
+          refreshContentTokens();
+        } catch (err) {
+          console.error(err);
+          toast(`Failed to delete token: ${(err && err.message) || String(err)}`);
+        }
+      }
+
+      async function populateVideoSelection() {
+        if (!state.me || String(state.me.role) !== "admin") {
+          el.videoSelectionContainer.innerHTML = "<div class='text-xs text-zinc-500'>Only available to admins</div>";
+          return;
+        }
+        
+        // Fetch all videos if we don't have them
+        if (state.allVideos.length === 0) {
+          try {
+            const r = await fetch(buildServerUrl("/api/videos"), { cache: "no-store" });
+            if (!r.ok) throw new Error(`Server error (${r.status})`);
+            const j = await r.json();
+            if (!j || !j.ok || !Array.isArray(j.videos)) throw new Error("Bad server response");
+            
+            state.allVideos = j.videos.map(v => ({
+              path: String(v.path || ""),
+              name: String(v.name || ""),
+              ext: String(v.ext || "").toLowerCase(),
+            }));
+          } catch (err) {
+            console.error("Error fetching videos for token creation:", err);
+            el.videoSelectionContainer.innerHTML = `<div class="text-xs text-rose-400">Error loading videos: ${err.message}</div>`;
+            return;
+          }
+        }
+        
+        // Clear container
+        el.videoSelectionContainer.innerHTML = "";
+        
+        // Add "Select All" checkbox
+        const selectAllDiv = document.createElement("div");
+        selectAllDiv.className = "flex items-center mb-2 p-2 border-b border-white/10";
+        selectAllDiv.innerHTML = `
+          <input type="checkbox" id="selectAllVideos" class="mr-2" />
+          <label for="selectAllVideos" class="text-sm font-medium">Select All Videos</label>
+        `;
+        
+        const selectAllCheckbox = selectAllDiv.querySelector("#selectAllVideos");
+        selectAllCheckbox.addEventListener("change", (e) => {
+          const checked = e.target.checked;
+          const checkboxes = el.videoSelectionContainer.querySelectorAll('.video-checkbox');
+          checkboxes.forEach(cb => cb.checked = checked);
+        });
+        
+        el.videoSelectionContainer.appendChild(selectAllDiv);
+        
+        // Add videos
+        for (const video of state.allVideos) {
+          const videoDiv = document.createElement("div");
+          videoDiv.className = "flex items-center p-1 hover:bg-black/30 rounded";
+          videoDiv.innerHTML = `
+            <input type="checkbox" id="chk-${video.path}" value="${video.path}" class="mr-2 video-checkbox" />
+            <label for="chk-${video.path}" class="text-xs truncate">${video.path}</label>
+          `;
+          el.videoSelectionContainer.appendChild(videoDiv);
         }
       }
 
@@ -1354,6 +1627,7 @@
             role: String(j.user.role || ""),
             quota: typeof j.user.quota === "number" ? j.user.quota : 0,
             unlockedCount: typeof j.user.unlockedCount === "number" ? j.user.unlockedCount : 0,
+            contentTokens: Array.isArray(j.user.contentTokens) ? j.user.contentTokens : []
           };
           setAuthUi();
         }
@@ -1568,7 +1842,10 @@
 
           const metaEl = document.createElement("div");
           metaEl.className = "mt-1 flex items-center gap-2 text-[10px] text-zinc-400";
-          metaEl.innerHTML = `<span class="rounded-full border border-white/10 bg-black/30 px-2 py-0.5 font-mono">${v.ext}</span>`;
+          const extSpan = document.createElement("span");
+          extSpan.className = "rounded-full border border-white/10 bg-black/30 px-2 py-0.5 font-mono";
+          extSpan.textContent = v.ext;
+          metaEl.appendChild(extSpan);
 
           label.appendChild(pathEl);
           label.appendChild(metaEl);
@@ -1595,170 +1872,125 @@
           if (entry.source === "server") {
             if (entry.unlocked) {
               url = serverMediaUrl(entry.path);
-              state.currentIsPreview = false;
             } else {
-              url = serverPreviewUrl(entry.path);
-              state.currentIsPreview = true;
+              // Check if we have a valid content token that allows access to this video
+              const hasValidToken = state.me && state.me.contentTokens && 
+                state.me.contentTokens.some(token => {
+                  // Check if token is valid and allows this video
+                  return token.currentUses < token.maxUses && 
+                         (!token.allowedVideos || token.allowedVideos.includes(entry.path));
+                });
+              
+              if (!hasValidToken) {
+                setError("Access denied. Video is locked.");
+                return;
+              }
+              
+              url = serverMediaUrl(entry.path);
             }
           } else {
             url = await getLocalObjectUrl(entry);
-            state.currentIsPreview = false;
           }
           el.player.src = url;
           el.player.load();
-          renderLibrary(); // refresh highlight
-
-          if (state.streamOn) {
-            await el.player.play();
-          }
+          if (state.streamOn) await el.player.play();
         } catch (err) {
           console.error(err);
-          setError("Could not load video (format/codec may be unsupported).");
+          setError((err && err.message) || String(err));
         }
       }
 
-      function toggleStream(forceOn = null) {
-        setError("");
-        state.streamOn = forceOn === null ? !state.streamOn : !!forceOn;
-        setStreamUi();
-
-        if (!state.streamOn) {
-          try {
-            el.player.pause();
-          } catch {
-            // Ignore.
-          }
-          return;
-        }
-
-        if (!el.player.src) return;
-        el.player.play().catch(() => {
-          // Autoplay restrictions can still apply; user can hit play in controls.
-        });
-      }
-
-      async function refreshLibrary({ reason, toastOnChange }) {
-        const usingServer = state.mode === "server";
-        if (!usingServer && !state.dirHandle) {
-          renderLibrary();
-          return;
-        }
-
+      async function refreshLibrary(opts) {
         if (state.scanInProgress) return;
-        state.scanInProgress = true;
-        el.refreshBtn.disabled = true;
-        el.refreshBtn.classList.add("opacity-60");
-        el.refreshBtn.classList.add("scan-shimmer");
-        const mySeq = ++state.scanSeq;
+        const seq = ++state.scanSeq;
+        opts = opts || {};
 
-        const start = performance.now();
-        if (usingServer) {
-          setStatus(reason === "auto" ? "Auto-fetching…" : "Fetching…");
-        } else {
-          setStatus(reason === "auto" ? "Auto-scanning…" : "Scanning…");
-        }
-
-        try {
-          /** @type {VideoEntry[]} */
-          let list;
-          if (usingServer) {
-            list = await fetchServerVideos();
-          } else {
-            // Never trigger permission prompts from background/manual scans.
-            const ok = await hasReadPermission(state.dirHandle);
-            if (!ok) {
-              setStatus("Permission lost (reselect folder)");
-              toast("Folder permission lost. Click Select Video Folder.");
-              return;
+        if (state.mode === "local") {
+          if (!state.dirHandle) return;
+          setStatus("Scanning folder…");
+          state.scanInProgress = true;
+          try {
+            const list = await scanDirectoryRecursive(state.dirHandle);
+            if (state.scanSeq !== seq) return;
+            const byPath = new Map(list.map((v) => [v.path, v]));
+            clearRemovedUrls(byPath);
+            state.videos = list;
+            state.byPath = byPath;
+            if (opts.toastOnChange && list.length !== state.videos.length) {
+              toast(`Found ${list.length} video${list.length === 1 ? "" : "s"}.`);
             }
-            list = await scanDirectoryRecursive(state.dirHandle);
+            renderLibrary();
+          } catch (err) {
+            console.error(err);
+            setError((err && err.message) || String(err));
+          } finally {
+            state.scanInProgress = false;
+            if (state.scanSeq === seq) setStatus("Ready");
           }
-          if (mySeq !== state.scanSeq) return;
+        } else if (state.mode === "server") {
+          setStatus("Loading library from server…");
+          state.scanInProgress = true;
+          try {
+            const list = await fetchServerVideos();
+            if (state.scanSeq !== seq) return;
+            state.videos = list;
+            state.byPath = new Map(list.map((v) => [v.path, v]));
+            if (opts.toastOnChange && list.length !== state.videos.length) {
+              toast(`Found ${list.length} video${list.length === 1 ? "" : "s"}.`);
+            }
+            renderLibrary();
+          } catch (err) {
+            console.error(err);
+            if (err.status === 401) {
+              setError("Sign in required");
+              state.me = null;
+              if (state.authToken) persistAuthTokenForBase(state.serverBase || window.location.origin, "");
+              setAuthUi();
+            } else {
+              setError((err && err.message) || String(err));
+            }
+          } finally {
+            state.scanInProgress = false;
+            if (state.scanSeq === seq) setStatus("Ready");
+          }
+        }
+      }
 
-          const newByPath = new Map(list.map((v) => [v.path, v]));
-          const prevCount = state.videos.length;
-          state.videos = list;
-          state.byPath = newByPath;
-          clearRemovedUrls(newByPath);
-          if (state.currentPath) setPlayerActions(newByPath.get(state.currentPath) || null);
+      // Initial setup
+      (async () => {
+        setSupportPill();
+        setServerFormUi();
+        setAuthUi();
+        setStreamUi();
+        renderLibrary();
 
-          if (state.currentPath && !newByPath.has(state.currentPath)) {
-            state.currentPath = null;
-            el.nowPlaying.textContent = "Nothing loaded";
+        // Event listeners
+        el.selectFolderBtn.addEventListener("click", selectFolder);
+        el.refreshBtn.addEventListener("click", () => refreshLibrary({ reason: "manual", toastOnChange: true }));
+        el.streamToggleBtn.addEventListener("click", () => {
+          state.streamOn = !state.streamOn;
+          setStreamUi();
+          if (state.streamOn && !state.currentIsPreview) {
             try {
-              el.player.pause();
-              el.player.removeAttribute("src");
-              el.player.load();
+              el.player.play();
             } catch {
               // Ignore.
             }
           }
-
-          renderLibrary();
-
-          const ms = Math.round(performance.now() - start);
-          setStatus(`${usingServer ? "Last fetch" : "Last scan"}: ${new Date().toLocaleTimeString()} (${ms}ms)`);
-
-          if (toastOnChange) {
-            if (list.length !== prevCount) toast(`Found ${list.length} video${list.length === 1 ? "" : "s"}`);
-          }
-        } catch (err) {
-          console.error(err);
-          const msg = (err && err.message) || String(err);
-          if (usingServer && String(msg) === "Sign in required") {
-            setStatus("Sign in required");
-            setError("Sign in to load the server library.");
-            state.videos = [];
-            state.byPath = new Map();
-            renderLibrary();
-          } else {
-            setStatus(usingServer ? "Fetch failed" : "Scan failed");
-            setError(msg);
-          }
-        } finally {
-          state.scanInProgress = false;
-          el.refreshBtn.disabled = false;
-          el.refreshBtn.classList.remove("opacity-60");
-          el.refreshBtn.classList.remove("scan-shimmer");
-        }
-      }
-
-      function setupPiP() {
-        const can =
-          "pictureInPictureEnabled" in document && document.pictureInPictureEnabled && typeof el.player.requestPictureInPicture === "function";
-        if (!can) {
-          el.pipBtn.disabled = true;
-          el.pipBtn.classList.add("opacity-50");
-          el.pipBtn.title = "Picture-in-Picture not supported";
-          return;
-        }
-
+        });
         el.pipBtn.addEventListener("click", async () => {
-          setError("");
           try {
             if (document.pictureInPictureElement) {
               await document.exitPictureInPicture();
-              return;
+            } else if (el.player) {
+              await el.player.requestPictureInPicture();
             }
-            await el.player.requestPictureInPicture();
           } catch (err) {
-            console.warn(err);
-            setError("PiP failed.");
+            console.error(err);
+            toast("Picture-in-Picture failed.");
           }
         });
-      }
-
-      function setupFullscreen() {
-        const can = !!(el.playerShell && el.playerShell.requestFullscreen);
-        if (!can) {
-          el.fsBtn.disabled = true;
-          el.fsBtn.classList.add("opacity-50");
-          el.fsBtn.title = "Fullscreen not supported";
-          return;
-        }
-
         el.fsBtn.addEventListener("click", async () => {
-          setError("");
           try {
             if (document.fullscreenElement) {
               await document.exitFullscreen();
@@ -1766,150 +1998,64 @@
               await el.playerShell.requestFullscreen();
             }
           } catch (err) {
-            console.warn(err);
-            setError("Fullscreen failed.");
+            console.error(err);
+            toast("Fullscreen failed.");
           }
         });
-      }
+        el.connectServerBtn.addEventListener("click", () => {
+          connectServer(el.serverUrlInput.value, el.serverTokenInput.value, { remember: true });
+        });
+        el.copyLinkBtn.addEventListener("click", copyShareLink);
+        el.disconnectServerBtn.addEventListener("click", disconnectServer);
+        el.signInBtn.addEventListener("click", signIn);
+        el.signUpBtn.addEventListener("click", signUp);
+        el.signOutBtn.addEventListener("click", signOut);
+        el.adminSetQuotaBtn.addEventListener("click", adminSetQuota);
+        el.adminRefreshUsersBtn.addEventListener("click", refreshAdminUsers);
+        el.createTokenBtn.addEventListener("click", createContentToken);
+        el.refreshTokensBtn.addEventListener("click", refreshContentTokens);
+        el.playerPreviewBtn.addEventListener("click", playCurrentPreview);
+        el.playerUnlockBtn.addEventListener("click", unlockCurrent);
+        el.overlayStreamOnBtn.addEventListener("click", () => {
+          state.streamOn = true;
+          setStreamUi();
+          if (!state.currentIsPreview) {
+            try {
+              el.player.play();
+            } catch {
+              // Ignore.
+            }
+          }
+        });
 
-      function setupAutoRescan() {
-        el.autoRescanLabel.textContent = `${Math.round(state.autoRescanMs / 1000)}s`;
+        // Auto-refresh library
         setInterval(() => {
-          if (state.mode !== "server" && !state.dirHandle) return;
-          if (document.visibilityState !== "visible") return;
-          refreshLibrary({ reason: "auto", toastOnChange: false });
-        }, state.autoRescanMs);
-      }
-
-      function wireUi() {
-        el.selectFolderBtn.addEventListener("click", selectFolder);
-        el.refreshBtn.addEventListener("click", () => refreshLibrary({ reason: "manual", toastOnChange: true }));
-        el.streamToggleBtn.addEventListener("click", () => toggleStream(null));
-        el.overlayStreamOnBtn.addEventListener("click", () => toggleStream(true));
-
-        el.signInBtn.addEventListener("click", () => signIn());
-        el.signUpBtn.addEventListener("click", () => signUp());
-        el.signOutBtn.addEventListener("click", () => signOut());
-        el.authPassInput.addEventListener("keydown", (e) => {
-          if (e.key === "Enter") signIn();
-        });
-
-        el.adminRefreshUsersBtn.addEventListener("click", () => refreshAdminUsers());
-        el.adminSetQuotaBtn.addEventListener("click", () => adminSetQuota());
-        el.adminUserSelect.addEventListener("change", () => {
-          const u = state.adminUsers.find((x) => String(x.username || "") === String(el.adminUserSelect.value || ""));
-          if (!u) return;
-          if (typeof u.quota === "number") el.adminQuotaInput.value = String(u.quota);
-        });
-
-        el.connectServerBtn.addEventListener("click", () =>
-          connectServer(el.serverUrlInput.value, el.serverTokenInput.value, { remember: true })
-        );
-        el.copyLinkBtn.addEventListener("click", () => copyShareLink());
-        el.disconnectServerBtn.addEventListener("click", () => disconnectServer());
-        el.serverUrlInput.addEventListener("keydown", (e) => {
-          if (e.key === "Enter") connectServer(el.serverUrlInput.value, el.serverTokenInput.value, { remember: true });
-        });
-        el.serverTokenInput.addEventListener("keydown", (e) => {
-          if (e.key === "Enter") connectServer(el.serverUrlInput.value, el.serverTokenInput.value, { remember: true });
-        });
-
-        el.playerPreviewBtn.addEventListener("click", () => playCurrentPreview());
-        el.playerUnlockBtn.addEventListener("click", () => unlockCurrent());
-
-        el.player.addEventListener("error", () => {
-          const err = el.player.error;
-          if (!err) return;
-          setError("Playback error (format/codec may be unsupported).");
-        });
-      }
-
-      async function init() {
-        setStreamUi();
-        wireUi();
-        setupPiP();
-        setupFullscreen();
-        setupAutoRescan();
-        setPlayerActions(null);
-
-        if (!navigator.storage || !navigator.storage.persist) {
-          // best effort only
-        } else {
-          navigator.storage.persist().catch(() => {});
-        }
-
-        const params = new URLSearchParams(window.location.search);
-        const qpServerRaw = params.get("server") || "";
-        const qpTokenRaw = params.get("token") || "";
-
-        let savedServerRaw = "";
-        let savedTokenRaw = "";
-        let savedUsername = "";
-        try {
-          savedServerRaw = localStorage.getItem("camfordick_server_base") || "";
-          savedTokenRaw = localStorage.getItem("camfordick_server_token") || "";
-          savedUsername = localStorage.getItem("camfordick_last_username") || "";
-        } catch {
-          // Ignore.
-        }
-
-        const initialServerRaw = qpServerRaw || savedServerRaw;
-        const initialTokenRaw = qpTokenRaw || savedTokenRaw;
-
-        if (initialServerRaw) el.serverUrlInput.value = initialServerRaw;
-        if (initialTokenRaw) el.serverTokenInput.value = initialTokenRaw;
-        if (savedUsername && !el.authUserInput.value) el.authUserInput.value = savedUsername;
-
-        // Prefer an explicitly configured server (GitHub Pages use-case).
-        if (initialServerRaw) {
-          const ok = await connectServer(initialServerRaw, initialTokenRaw, { remember: !qpServerRaw });
-          if (ok) return;
-        }
-
-        // Same-origin server (when you open http://localhost:5173/ from server.js)
-        const info = await detectServerInfoAt(window.location.origin);
-        if (info) {
-          resetLibraryState();
-          state.mode = "server";
-          state.serverInfo = info;
-          state.serverBase = "";
-          state.serverToken = String(initialTokenRaw || "").trim();
-          state.me = null;
-          restoreAuthTokenForBase(window.location.origin);
-          state.dirHandle = null;
-          setSupportPill();
-          setServerFormUi();
-          setAuthUi();
-          setFolderName(`Server: ${window.location.host}`);
-          setStatus("Server connected");
-          renderLibrary();
-          const authed = await refreshMe();
-          if (authed || state.serverToken) {
-            await refreshLibrary({ reason: "startup", toastOnChange: false });
-          } else {
-            setStatus("Sign in required");
-            el.emptyHint.textContent = "Sign in to load the server library (or enter a legacy token).";
-            el.emptyState.classList.remove("hidden");
+          if (state.mode === "server" && state.me) {
+            refreshLibrary({ reason: "auto", toastOnChange: false });
           }
-          return;
+        }, state.autoRescanMs);
+
+        // Try to restore server connection from URL params
+        const u = new URL(window.location);
+        const serverParam = u.searchParams.get("server");
+        const tokenParam = u.searchParams.get("token");
+        if (serverParam) {
+          // Don't await to avoid blocking UI
+          connectServer(serverParam, tokenParam || "", { remember: false });
+        } else {
+          // Try to restore last used server
+          try {
+            const base = localStorage.getItem("camfordick_server_base") || "";
+            const token = localStorage.getItem("camfordick_server_token") || "";
+            if (base) connectServer(base, token, { remember: false });
+          } catch {
+            // Ignore.
+          }
         }
 
-        setSupportPill();
-        setServerFormUi();
-        setAuthUi();
-        await tryRestoreFolderHandle();
-
-        renderLibrary();
-
-        if (state.dirHandle) {
-          await refreshLibrary({ reason: "startup", toastOnChange: false });
-        }
-      }
-
-      init().catch((err) => {
-        console.error(err);
-        setError("Init failed.");
-      });
+        // Try to restore folder handle
+        tryRestoreFolderHandle();
+      })();
     </script>
   </body>
 </html>

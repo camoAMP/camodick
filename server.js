@@ -50,7 +50,23 @@ const AUTH_SECRET = (() => {
 })();
 
 const USERS_FILE = path.join(DATA_DIR, "users.json");
-/** @type {{users: Array<{id:string,username:string,role:"admin"|"user",salt:string,passHash:string,quota:number,unlocked:string[],createdAt:string}>}} */
+/**
+ * @type {{
+ *   users: Array<{
+ *     id:string,
+ *     username:string,
+ *     role:"admin"|"user",
+ *     salt:string,
+ *     passHash:string,
+ *     quota:number,
+ *     unlocked:string[],
+ *     disabled?:boolean,
+ *     accessUntilMs?:number|null,
+ *     contentTokens?:Array<{id:string,name:string,maxUses:number,currentUses:number,createdAt:string,validUntil?:string,allowedVideos?:string[]}>,
+ *     createdAt:string
+ *   }>
+ * }}
+ */
 let usersDb = { users: [] };
 try {
   const raw = fs.readFileSync(USERS_FILE, "utf8");
@@ -76,12 +92,46 @@ function queueSaveUsers() {
   return saveChain;
 }
 
+const SESSIONS_FILE = path.join(DATA_DIR, "sessions.json");
+/**
+ * @type {{sessions: Array<{id:string,uid:string,deviceId?:string,deviceName?:string,userAgent?:string,ip?:string,createdAt:string,lastSeenAt?:string,revokedAt?:string}>}}
+ */
+let sessionsDb = { sessions: [] };
+try {
+  const raw = fs.readFileSync(SESSIONS_FILE, "utf8");
+  const parsed = JSON.parse(raw);
+  if (parsed && Array.isArray(parsed.sessions)) sessionsDb = parsed;
+} catch {
+  // Ignore; file may not exist yet.
+}
+
+let saveSessionsChain = Promise.resolve();
+function queueSaveSessions() {
+  const body = Buffer.from(JSON.stringify(sessionsDb, null, 2));
+  const tmp = `${SESSIONS_FILE}.tmp`;
+  saveSessionsChain = saveSessionsChain
+    .then(async () => {
+      await fsp.mkdir(DATA_DIR, { recursive: true });
+      await fsp.writeFile(tmp, body, { mode: 0o600 });
+      await fsp.rename(tmp, SESSIONS_FILE);
+    })
+    .catch((err) => {
+      console.error("Failed to save sessions:", err);
+    });
+  return saveSessionsChain;
+}
+
 function json(res, status, obj) {
   const body = Buffer.from(JSON.stringify(obj, null, 2));
   res.writeHead(status, {
     "Content-Type": "application/json; charset=utf-8",
     "Content-Length": body.length,
     "Cache-Control": "no-store",
+    // Anti-piracy headers
+    "X-Content-Type-Options": "nosniff",
+    "Referrer-Policy": "same-origin",
+    "Cross-Origin-Embedder-Policy": "require-corp",
+    "Cross-Origin-Opener-Policy": "same-origin"
   });
   res.end(body);
 }
@@ -92,6 +142,11 @@ function text(res, status, body, contentType = "text/plain; charset=utf-8") {
     "Content-Type": contentType,
     "Content-Length": buf.length,
     "Cache-Control": "no-store",
+    // Anti-piracy headers
+    "X-Content-Type-Options": "nosniff",
+    "Referrer-Policy": "same-origin",
+    "Cross-Origin-Embedder-Policy": "require-corp",
+    "Cross-Origin-Opener-Policy": "same-origin"
   });
   res.end(buf);
 }
@@ -130,9 +185,33 @@ function b64urlToBuf(s) {
   return Buffer.from(str + pad, "base64");
 }
 
-function makeAuthToken(user) {
+function makeAuthToken(user, sessionId = null) {
   const expMs = Date.now() + SESSION_DAYS * 24 * 60 * 60 * 1000;
   const payload = { uid: user.id, exp: expMs };
+  if (sessionId) payload.sid = sessionId;
+  const payloadB64 = b64url(JSON.stringify(payload));
+  const sig = crypto.createHmac("sha256", AUTH_SECRET).update(payloadB64).digest();
+  return `${payloadB64}.${b64url(sig)}`;
+}
+
+function makeContentToken(userId, tokenName, maxUses, validUntil, allowedVideos) {
+  const expMs = validUntil ? new Date(validUntil).getTime() : Date.now() + 7 * 24 * 60 * 60 * 1000; // default 1 week
+  const tokenId = crypto.randomUUID();
+  const payload = { tid: tokenId, uid: userId, exp: expMs };
+  const payloadB64 = b64url(JSON.stringify(payload));
+  const sig = crypto.createHmac("sha256", AUTH_SECRET).update(payloadB64).digest();
+  return {
+    token: `${payloadB64}.${b64url(sig)}`,
+    tokenId,
+    name: tokenName,
+    maxUses,
+    validUntil: new Date(expMs).toISOString(),
+    allowedVideos
+  };
+}
+
+function makeContentTokenString(userId, tokenId, expMs) {
+  const payload = { tid: tokenId, uid: userId, exp: expMs };
   const payloadB64 = b64url(JSON.stringify(payload));
   const sig = crypto.createHmac("sha256", AUTH_SECRET).update(payloadB64).digest();
   return `${payloadB64}.${b64url(sig)}`;
@@ -152,6 +231,7 @@ function verifyAuthToken(token) {
     return null;
   }
   if (!payload || typeof payload.uid !== "string" || typeof payload.exp !== "number") return null;
+  if ("sid" in payload && payload.sid !== null && typeof payload.sid !== "string") return null;
   if (Date.now() > payload.exp) return null;
 
   const expected = crypto.createHmac("sha256", AUTH_SECRET).update(payloadB64).digest();
@@ -166,7 +246,58 @@ function verifyAuthToken(token) {
 
   const user = usersDb.users.find((u) => u.id === payload.uid);
   if (!user) return null;
-  return user;
+  const disabled = !!user.disabled;
+  const accessUntilMs = user.accessUntilMs === null ? null : typeof user.accessUntilMs === "number" ? user.accessUntilMs : null;
+  const expired = typeof accessUntilMs === "number" ? Date.now() > accessUntilMs : false;
+
+  let session = null;
+  if (payload.sid) {
+    session = sessionsDb.sessions.find((s) => s.id === payload.sid) || null;
+    if (!session) return null;
+    if (session.uid !== user.id) return null;
+    if (session.revokedAt) return null;
+  }
+
+  return { user, session, sid: payload.sid || null, disabled, expired };
+}
+
+function verifyContentToken(token) {
+  const t = String(token || "").trim();
+  const dot = t.indexOf(".");
+  if (dot < 0) return null;
+  const payloadB64 = t.slice(0, dot);
+  const sigB64 = t.slice(dot + 1);
+
+  let payload;
+  try {
+    payload = JSON.parse(b64urlToBuf(payloadB64).toString("utf8"));
+  } catch {
+    return null;
+  }
+  if (!payload || typeof payload.tid !== "string" || typeof payload.uid !== "string" || typeof payload.exp !== "number") return null;
+  if (Date.now() > payload.exp) return null;
+
+  const expected = crypto.createHmac("sha256", AUTH_SECRET).update(payloadB64).digest();
+  let got;
+  try {
+    got = b64urlToBuf(sigB64);
+  } catch {
+    return null;
+  }
+  if (got.length !== expected.length) return null;
+  if (!crypto.timingSafeEqual(got, expected)) return null;
+
+  // Find user who owns this token
+  const user = usersDb.users.find((u) => u.id === payload.uid);
+  if (!user) return null;
+  if (user.disabled) return null;
+  if (typeof user.accessUntilMs === "number" && Date.now() > user.accessUntilMs) return null;
+  
+  // Find the specific token in the user's tokens
+  const userToken = (user.contentTokens || []).find(t => t.id === payload.tid);
+  if (!userToken) return null;
+  
+  return { user, tokenInfo: userToken };
 }
 
 function cleanUsername(raw) {
@@ -485,11 +616,63 @@ function authContext(req, url) {
   const bearer = header.toLowerCase().startsWith("bearer ") ? header.slice(7).trim() : "";
   const q = String(url.searchParams.get("auth") || "").trim();
   const tok = bearer || q;
-  if (!tok) return null;
+  if (!tok) {
+    // Check for content token
+    const contentToken = String(url.searchParams.get("contentToken") || "").trim();
+    if (contentToken) {
+      return verifyContentToken(contentToken);
+    }
+    return null;
+  }
 
-  const user = verifyAuthToken(tok);
-  if (!user) return null;
-  return { kind: "user", role: user.role, user };
+  const v = verifyAuthToken(tok);
+  if (!v) return null;
+  return {
+    kind: "user",
+    role: v.user.role,
+    user: v.user,
+    session: v.session,
+    sid: v.sid,
+    disabled: v.disabled,
+    expired: v.expired,
+  };
+}
+
+function authInactiveReason(ctx) {
+  if (!ctx || ctx.kind !== "user") return null;
+  if (ctx.disabled) return "disabled";
+  if (ctx.expired) return "expired";
+  return null;
+}
+
+function getClientIp(req) {
+  const cf = String(req.headers["cf-connecting-ip"] || "").trim();
+  if (cf) return cf;
+  const xff = String(req.headers["x-forwarded-for"] || "").trim();
+  if (xff) return xff.split(",")[0].trim();
+  return String((req.socket && req.socket.remoteAddress) || "").trim();
+}
+
+function sanitizeDeviceField(raw, maxLen = 160) {
+  const s = String(raw || "").trim();
+  if (!s) return "";
+  return s.length > maxLen ? s.slice(0, maxLen) : s;
+}
+
+function createSessionForUser(user, { deviceId, deviceName, req }) {
+  const now = new Date().toISOString();
+  const session = {
+    id: crypto.randomUUID(),
+    uid: user.id,
+    deviceId: sanitizeDeviceField(deviceId, 120) || undefined,
+    deviceName: sanitizeDeviceField(deviceName, 120) || undefined,
+    userAgent: sanitizeDeviceField(req.headers["user-agent"], 260) || undefined,
+    ip: sanitizeDeviceField(getClientIp(req), 80) || undefined,
+    createdAt: now,
+    lastSeenAt: now,
+  };
+  sessionsDb.sessions.push(session);
+  return session;
 }
 
 const server = http.createServer(async (req, res) => {
@@ -545,12 +728,17 @@ const server = http.createServer(async (req, res) => {
         passHash: derived.toString("hex"),
         quota: role === "admin" ? -1 : 0,
         unlocked: [],
+        contentTokens: [], // Initialize content tokens array
+        disabled: false,
+        accessUntilMs: null,
         createdAt: new Date().toISOString(),
       };
       usersDb.users.push(user);
       await queueSaveUsers();
 
-      const auth = makeAuthToken(user);
+      const session = createSessionForUser(user, { deviceId: body && body.deviceId, deviceName: body && body.deviceName, req });
+      await queueSaveSessions();
+      const auth = makeAuthToken(user, session.id);
       return json(res, 200, { ok: true, user: { username: user.username, role: user.role, quota: user.quota }, auth });
     }
 
@@ -565,7 +753,12 @@ const server = http.createServer(async (req, res) => {
       const ok = await verifyPassword(user, password).catch(() => false);
       if (!ok) return json(res, 401, { ok: false, error: "invalid_credentials" });
 
-      const auth = makeAuthToken(user);
+      if (user.disabled) return json(res, 403, { ok: false, error: "account_disabled" });
+      if (typeof user.accessUntilMs === "number" && Date.now() > user.accessUntilMs) return json(res, 403, { ok: false, error: "access_expired" });
+
+      const session = createSessionForUser(user, { deviceId: body && body.deviceId, deviceName: body && body.deviceName, req });
+      await queueSaveSessions();
+      const auth = makeAuthToken(user, session.id);
       return json(res, 200, { ok: true, user: { username: user.username, role: user.role, quota: user.quota }, auth });
     }
 
@@ -573,22 +766,110 @@ const server = http.createServer(async (req, res) => {
       const ctx = authContext(req, url);
       if (!ctx) return json(res, 401, { ok: false, error: "unauthorized" });
       if (ctx.kind === "legacy") return json(res, 200, { ok: true, user: { username: "legacy-token", role: "admin", quota: -1, unlockedCount: -1 } });
+      if (ctx.kind !== "user") return json(res, 401, { ok: false, error: "unauthorized" });
       const u = ctx.user;
+      const accessUntilMs = u.accessUntilMs === null ? null : typeof u.accessUntilMs === "number" ? u.accessUntilMs : null;
+      const accessRemainingMs = typeof accessUntilMs === "number" ? Math.max(0, accessUntilMs - Date.now()) : null;
       return json(res, 200, {
         ok: true,
+        inactive: authInactiveReason(ctx),
         user: {
           username: u.username,
           role: u.role,
           quota: u.quota,
           unlockedCount: Array.isArray(u.unlocked) ? u.unlocked.length : 0,
+          disabled: !!u.disabled,
+          accessUntilMs,
+          accessRemainingMs,
+          contentTokens: u.contentTokens || [],
         },
+      });
+    }
+
+    if (pathname === "/api/ping" && req.method === "POST") {
+      const ctx = authContext(req, url);
+      if (!ctx || ctx.kind !== "user") return json(res, 401, { ok: false, error: "unauthorized" });
+      const inactive = authInactiveReason(ctx);
+      if (inactive) return json(res, 403, { ok: false, error: inactive === "disabled" ? "account_disabled" : "access_expired" });
+
+      const body = await readJson(req).catch(() => null);
+      let session = ctx.session;
+      let refreshedAuth = "";
+      if (!session) {
+        session = createSessionForUser(ctx.user, { deviceId: body && body.deviceId, deviceName: body && body.deviceName, req });
+        await queueSaveSessions();
+        refreshedAuth = makeAuthToken(ctx.user, session.id);
+      } else {
+        const did = sanitizeDeviceField(body && body.deviceId, 120);
+        const dname = sanitizeDeviceField(body && body.deviceName, 120);
+        if (did) session.deviceId = did;
+        if (dname) session.deviceName = dname;
+        session.userAgent = sanitizeDeviceField(req.headers["user-agent"], 260) || session.userAgent;
+        session.ip = sanitizeDeviceField(getClientIp(req), 80) || session.ip;
+        session.lastSeenAt = new Date().toISOString();
+        await queueSaveSessions();
+      }
+
+      const u = ctx.user;
+      const accessUntilMs = u.accessUntilMs === null ? null : typeof u.accessUntilMs === "number" ? u.accessUntilMs : null;
+      const accessRemainingMs = typeof accessUntilMs === "number" ? Math.max(0, accessUntilMs - Date.now()) : null;
+      return json(res, 200, {
+        ok: true,
+        auth: refreshedAuth || undefined,
+        user: {
+          username: u.username,
+          role: u.role,
+          quota: u.quota,
+          unlockedCount: Array.isArray(u.unlocked) ? u.unlocked.length : 0,
+          disabled: !!u.disabled,
+          accessUntilMs,
+          accessRemainingMs,
+        },
+        session: session ? { id: session.id, deviceId: session.deviceId || "", deviceName: session.deviceName || "" } : null,
       });
     }
 
     if (pathname === "/api/videos") {
       const ctx = authContext(req, url);
       if (!ctx) return json(res, 401, { ok: false, error: "unauthorized" });
+      
+      const inactive = authInactiveReason(ctx);
+      if (inactive) {
+        const u = ctx.user;
+        return json(res, 403, {
+          ok: false,
+          error: inactive === "disabled" ? "account_disabled" : "access_expired",
+          accessUntilMs: typeof u.accessUntilMs === "number" ? u.accessUntilMs : null,
+        });
+      }
+
       const videos = await listVideosRecursive(VIDEO_DIR);
+      
+      // Content token access (no login): filter to allowed videos and mark unlocked based on remaining uses.
+      if (ctx.tokenInfo) {
+        const token = ctx.tokenInfo;
+        const allowed = Array.isArray(token.allowedVideos) ? token.allowedVideos.map(String) : [];
+        const allowedSet = allowed.length ? new Set(allowed) : null;
+
+        const used = Array.isArray(token.usedVideos) ? token.usedVideos.map(String) : [];
+        const usedSet = new Set(used);
+
+        const maxUses = Number(token.maxUses);
+        const unlimited = Number.isFinite(maxUses) && maxUses < 0;
+        const canUnlockNew = unlimited || (Number.isFinite(maxUses) && maxUses > 0 && usedSet.size < maxUses);
+
+        const list = videos
+          .filter((v) => !allowedSet || allowedSet.has(v.path))
+          .map((v) => ({ ...v, unlocked: usedSet.has(v.path) || canUnlockNew }));
+
+        return json(res, 200, {
+          ok: true,
+          count: list.length,
+          videos: list,
+          user: { role: "token-user", quota: unlimited ? -1 : Number.isFinite(maxUses) ? Math.floor(maxUses) : 0, unlockedCount: usedSet.size },
+        });
+      }
+      
       if (ctx.kind === "legacy" || ctx.role === "admin") {
         const list = videos.map((v) => ({ ...v, unlocked: true }));
         return json(res, 200, { ok: true, count: list.length, videos: list, user: { role: "admin", quota: -1, unlockedCount: -1 } });
@@ -611,6 +892,8 @@ const server = http.createServer(async (req, res) => {
     if (pathname === "/api/unlock" && req.method === "POST") {
       const ctx = authContext(req, url);
       if (!ctx || ctx.kind !== "user") return json(res, 401, { ok: false, error: "unauthorized" });
+      const inactive = authInactiveReason(ctx);
+      if (inactive) return json(res, 403, { ok: false, error: inactive === "disabled" ? "account_disabled" : "access_expired" });
       const body = await readJson(req).catch(() => null);
       let relPath;
       try {
@@ -650,6 +933,8 @@ const server = http.createServer(async (req, res) => {
     if (pathname === "/api/admin/users") {
       const ctx = authContext(req, url);
       if (!ctx) return json(res, 401, { ok: false, error: "unauthorized" });
+      const inactive = authInactiveReason(ctx);
+      if (inactive) return json(res, 403, { ok: false, error: inactive === "disabled" ? "account_disabled" : "access_expired" });
       if (!(ctx.kind === "legacy" || ctx.role === "admin")) return json(res, 403, { ok: false, error: "forbidden" });
       const users = usersDb.users
         .map((u) => ({
@@ -658,6 +943,11 @@ const server = http.createServer(async (req, res) => {
           quota: u.quota,
           unlockedCount: Array.isArray(u.unlocked) ? u.unlocked.length : 0,
           createdAt: u.createdAt,
+          disabled: !!u.disabled,
+          accessUntilMs: u.accessUntilMs === null ? null : typeof u.accessUntilMs === "number" ? u.accessUntilMs : null,
+          accessRemainingMs:
+            typeof u.accessUntilMs === "number" ? Math.max(0, u.accessUntilMs - Date.now()) : null,
+          contentTokens: u.contentTokens ? u.contentTokens.length : 0,
         }))
         .sort((a, b) => a.username.localeCompare(b.username));
       return json(res, 200, { ok: true, users });
@@ -666,6 +956,8 @@ const server = http.createServer(async (req, res) => {
     if (pathname === "/api/admin/set-quota" && req.method === "POST") {
       const ctx = authContext(req, url);
       if (!ctx) return json(res, 401, { ok: false, error: "unauthorized" });
+      const inactive = authInactiveReason(ctx);
+      if (inactive) return json(res, 403, { ok: false, error: inactive === "disabled" ? "account_disabled" : "access_expired" });
       if (!(ctx.kind === "legacy" || ctx.role === "admin")) return json(res, 403, { ok: false, error: "forbidden" });
       const body = await readJson(req).catch(() => null);
       const username = cleanUsername(body && body.username);
@@ -681,9 +973,318 @@ const server = http.createServer(async (req, res) => {
       return json(res, 200, { ok: true });
     }
 
+    if (pathname === "/api/admin/update-user" && req.method === "POST") {
+      const ctx = authContext(req, url);
+      if (!ctx) return json(res, 401, { ok: false, error: "unauthorized" });
+      const inactive = authInactiveReason(ctx);
+      if (inactive) return json(res, 403, { ok: false, error: inactive === "disabled" ? "account_disabled" : "access_expired" });
+      if (!(ctx.kind === "legacy" || ctx.role === "admin")) return json(res, 403, { ok: false, error: "forbidden" });
+      const body = await readJson(req).catch(() => null);
+      const username = cleanUsername(body && body.username);
+      if (!username) return json(res, 400, { ok: false, error: "bad_request" });
+
+      const user = usersDb.users.find((u) => u.username.toLowerCase() === username.toLowerCase());
+      if (!user) return json(res, 404, { ok: false, error: "not_found" });
+      if (user.role === "admin") return json(res, 400, { ok: false, error: "cannot_change_admin" });
+
+      if (body && Object.prototype.hasOwnProperty.call(body, "quota")) {
+        const quota = Number(body.quota);
+        if (!Number.isFinite(quota) || quota < 0 || quota > 1_000_000) return json(res, 400, { ok: false, error: "bad_quota" });
+        user.quota = Math.floor(quota);
+      }
+
+      if (body && Object.prototype.hasOwnProperty.call(body, "accessMinutes")) {
+        const mins = Number(body.accessMinutes);
+        if (!Number.isFinite(mins) || mins < -1 || mins > 10_000_000) return json(res, 400, { ok: false, error: "bad_access_minutes" });
+        if (mins < 0) {
+          user.accessUntilMs = null;
+        } else {
+          user.accessUntilMs = Date.now() + Math.floor(mins) * 60_000;
+        }
+      }
+
+      if (body && Object.prototype.hasOwnProperty.call(body, "disabled")) {
+        user.disabled = !!body.disabled;
+        if (user.disabled) {
+          const now = new Date().toISOString();
+          for (const s of sessionsDb.sessions) {
+            if (s.uid !== user.id) continue;
+            if (s.revokedAt) continue;
+            s.revokedAt = now;
+          }
+          await queueSaveSessions();
+        }
+      }
+
+      await queueSaveUsers();
+      return json(res, 200, { ok: true });
+    }
+
+    if (pathname === "/api/admin/clear-unlocks" && req.method === "POST") {
+      const ctx = authContext(req, url);
+      if (!ctx) return json(res, 401, { ok: false, error: "unauthorized" });
+      const inactive = authInactiveReason(ctx);
+      if (inactive) return json(res, 403, { ok: false, error: inactive === "disabled" ? "account_disabled" : "access_expired" });
+      if (!(ctx.kind === "legacy" || ctx.role === "admin")) return json(res, 403, { ok: false, error: "forbidden" });
+      const body = await readJson(req).catch(() => null);
+      const username = cleanUsername(body && body.username);
+      if (!username) return json(res, 400, { ok: false, error: "bad_request" });
+      const user = usersDb.users.find((u) => u.username.toLowerCase() === username.toLowerCase());
+      if (!user) return json(res, 404, { ok: false, error: "not_found" });
+      if (user.role === "admin") return json(res, 400, { ok: false, error: "cannot_change_admin" });
+      user.unlocked = [];
+      await queueSaveUsers();
+      return json(res, 200, { ok: true });
+    }
+
+    if (pathname === "/api/admin/sessions") {
+      const ctx = authContext(req, url);
+      if (!ctx) return json(res, 401, { ok: false, error: "unauthorized" });
+      const inactive = authInactiveReason(ctx);
+      if (inactive) return json(res, 403, { ok: false, error: inactive === "disabled" ? "account_disabled" : "access_expired" });
+      if (!(ctx.kind === "legacy" || ctx.role === "admin")) return json(res, 403, { ok: false, error: "forbidden" });
+      const nowMs = Date.now();
+      const onlineWindowMs = 60_000;
+      const sessions = sessionsDb.sessions
+        .map((s) => {
+          const u = usersDb.users.find((x) => x.id === s.uid) || null;
+          const lastSeenMs = s.lastSeenAt ? Date.parse(s.lastSeenAt) : 0;
+          const online = !s.revokedAt && lastSeenMs && nowMs - lastSeenMs <= onlineWindowMs;
+          return {
+            id: s.id,
+            username: u ? u.username : "(deleted)",
+            uid: s.uid,
+            deviceId: s.deviceId || "",
+            deviceName: s.deviceName || "",
+            userAgent: s.userAgent || "",
+            ip: s.ip || "",
+            createdAt: s.createdAt,
+            lastSeenAt: s.lastSeenAt || null,
+            revokedAt: s.revokedAt || null,
+            online,
+          };
+        })
+        .sort((a, b) => {
+          if (a.online !== b.online) return a.online ? -1 : 1;
+          const am = a.lastSeenAt ? Date.parse(a.lastSeenAt) : 0;
+          const bm = b.lastSeenAt ? Date.parse(b.lastSeenAt) : 0;
+          return bm - am;
+        });
+      return json(res, 200, { ok: true, sessions });
+    }
+
+    if (pathname === "/api/admin/revoke-session" && req.method === "POST") {
+      const ctx = authContext(req, url);
+      if (!ctx) return json(res, 401, { ok: false, error: "unauthorized" });
+      const inactive = authInactiveReason(ctx);
+      if (inactive) return json(res, 403, { ok: false, error: inactive === "disabled" ? "account_disabled" : "access_expired" });
+      if (!(ctx.kind === "legacy" || ctx.role === "admin")) return json(res, 403, { ok: false, error: "forbidden" });
+      const body = await readJson(req).catch(() => null);
+      const sessionId = sanitizeDeviceField(body && body.sessionId, 80);
+      if (!sessionId) return json(res, 400, { ok: false, error: "bad_request" });
+      const s = sessionsDb.sessions.find((x) => x.id === sessionId);
+      if (!s) return json(res, 404, { ok: false, error: "not_found" });
+      if (!s.revokedAt) {
+        s.revokedAt = new Date().toISOString();
+        await queueSaveSessions();
+      }
+      return json(res, 200, { ok: true });
+    }
+
+    if (pathname === "/api/admin/revoke-user-sessions" && req.method === "POST") {
+      const ctx = authContext(req, url);
+      if (!ctx) return json(res, 401, { ok: false, error: "unauthorized" });
+      const inactive = authInactiveReason(ctx);
+      if (inactive) return json(res, 403, { ok: false, error: inactive === "disabled" ? "account_disabled" : "access_expired" });
+      if (!(ctx.kind === "legacy" || ctx.role === "admin")) return json(res, 403, { ok: false, error: "forbidden" });
+      const body = await readJson(req).catch(() => null);
+      const username = cleanUsername(body && body.username);
+      if (!username) return json(res, 400, { ok: false, error: "bad_request" });
+      const user = usersDb.users.find((u) => u.username.toLowerCase() === username.toLowerCase());
+      if (!user) return json(res, 404, { ok: false, error: "not_found" });
+      const now = new Date().toISOString();
+      let count = 0;
+      for (const s of sessionsDb.sessions) {
+        if (s.uid !== user.id) continue;
+        if (s.revokedAt) continue;
+        s.revokedAt = now;
+        count++;
+      }
+      if (count) await queueSaveSessions();
+      return json(res, 200, { ok: true, revoked: count });
+    }
+
+    if (pathname === "/api/admin/delete-video" && req.method === "POST") {
+      const ctx = authContext(req, url);
+      if (!ctx) return json(res, 401, { ok: false, error: "unauthorized" });
+      const inactive = authInactiveReason(ctx);
+      if (inactive) return json(res, 403, { ok: false, error: inactive === "disabled" ? "account_disabled" : "access_expired" });
+      if (!(ctx.kind === "legacy" || ctx.role === "admin")) return json(res, 403, { ok: false, error: "forbidden" });
+      const body = await readJson(req).catch(() => null);
+      let relPath;
+      try {
+        relPath = safeRelPathFromClient(body && body.path);
+      } catch {
+        return json(res, 400, { ok: false, error: "bad_path" });
+      }
+      const abs = path.resolve(VIDEO_DIR, relPath);
+      if (!insideBase(VIDEO_DIR, abs)) return json(res, 403, { ok: false, error: "forbidden" });
+      const ext = path.extname(abs).toLowerCase();
+      if (!VIDEO_EXTS.has(ext)) return json(res, 400, { ok: false, error: "unsupported" });
+
+      let st = null;
+      try {
+        st = await fsp.stat(abs);
+        if (!st.isFile()) return json(res, 404, { ok: false, error: "not_found" });
+      } catch {
+        return json(res, 404, { ok: false, error: "not_found" });
+      }
+
+      // Cache key uses stat info, so compute before deletion.
+      const key = cacheKeyForVideo(relPath, st);
+
+      try {
+        await fsp.unlink(abs);
+      } catch {
+        return json(res, 500, { ok: false, error: "delete_failed" });
+      }
+
+      // Remove from unlock lists.
+      let unlockRemovals = 0;
+      for (const u of usersDb.users) {
+        if (!Array.isArray(u.unlocked) || u.unlocked.length === 0) continue;
+        const before = u.unlocked.length;
+        u.unlocked = u.unlocked.filter((p) => String(p) !== relPath);
+        unlockRemovals += before - u.unlocked.length;
+      }
+      if (unlockRemovals) await queueSaveUsers();
+
+      // Delete cached previews/thumbs for this file (best effort).
+      try {
+        const names = await fsp.readdir(CACHE_DIR);
+        await Promise.all(
+          names
+            .filter((n) => n.startsWith(key))
+            .map((n) => fsp.unlink(path.join(CACHE_DIR, n)).catch(() => {}))
+        );
+      } catch {
+        // Ignore.
+      }
+
+      return json(res, 200, { ok: true, removedUnlocks: unlockRemovals });
+    }
+
+    if (pathname === "/api/content-tokens" && req.method === "GET") {
+      const ctx = authContext(req, url);
+      if (!ctx || ctx.kind !== "user") return json(res, 401, { ok: false, error: "unauthorized" });
+      const inactive = authInactiveReason(ctx);
+      if (inactive) return json(res, 403, { ok: false, error: inactive === "disabled" ? "account_disabled" : "access_expired" });
+      if (ctx.role !== "admin") return json(res, 403, { ok: false, error: "forbidden" });
+
+      const tokens = Array.isArray(ctx.user.contentTokens) ? ctx.user.contentTokens : [];
+      const out = tokens.map((t) => {
+        const expMs = t && t.validUntil ? Date.parse(t.validUntil) : Date.now() + 7 * 24 * 60 * 60 * 1000;
+        return {
+          id: String(t.id || ""),
+          name: String(t.name || ""),
+          maxUses: Number(t.maxUses || 0),
+          currentUses: Number(t.currentUses || 0),
+          createdAt: String(t.createdAt || ""),
+          validUntil: t.validUntil ? String(t.validUntil) : null,
+          allowedVideos: Array.isArray(t.allowedVideos) ? t.allowedVideos.map(String) : null,
+          token: makeContentTokenString(ctx.user.id, String(t.id || ""), expMs),
+        };
+      });
+      out.sort((a, b) => String(a.name || "").localeCompare(String(b.name || "")));
+      return json(res, 200, { ok: true, contentTokens: out });
+    }
+
+    if (pathname === "/api/content-tokens" && req.method === "POST") {
+      const ctx = authContext(req, url);
+      if (!ctx || ctx.kind !== "user") return json(res, 401, { ok: false, error: "unauthorized" });
+      const inactive = authInactiveReason(ctx);
+      if (inactive) return json(res, 403, { ok: false, error: inactive === "disabled" ? "account_disabled" : "access_expired" });
+      if (ctx.role !== "admin") return json(res, 403, { ok: false, error: "forbidden" });
+
+      const body = await readJson(req).catch(() => null);
+      const name = String(body && body.name ? body.name : "").trim();
+      const maxUses = Number(body && body.maxUses);
+      const validUntil = body && body.validUntil ? String(body.validUntil).trim() : "";
+      const allowedVideosRaw = body && body.allowedVideos ? body.allowedVideos : null;
+
+      if (!name || name.length > 80) return json(res, 400, { ok: false, error: "bad_name" });
+      if (!Number.isFinite(maxUses) || maxUses <= 0 || maxUses > 1_000_000) return json(res, 400, { ok: false, error: "bad_max_uses" });
+
+      let allowedVideos = null;
+      if (Array.isArray(allowedVideosRaw) && allowedVideosRaw.length > 0) {
+        try {
+          allowedVideos = [...new Set(allowedVideosRaw.map((p) => safeRelPathFromClient(p)))];
+        } catch {
+          return json(res, 400, { ok: false, error: "bad_allowed_videos" });
+        }
+      }
+
+      let expMs = Date.now() + 7 * 24 * 60 * 60 * 1000; // default 1 week
+      if (validUntil) {
+        if (/^\\d{4}-\\d{2}-\\d{2}$/.test(validUntil)) expMs = Date.parse(`${validUntil}T23:59:59.999Z`);
+        else expMs = Date.parse(validUntil);
+        if (!Number.isFinite(expMs)) return json(res, 400, { ok: false, error: "bad_valid_until" });
+      }
+
+      const tokenId = crypto.randomUUID();
+      const now = new Date().toISOString();
+      const rec = {
+        id: tokenId,
+        name,
+        maxUses: Math.floor(maxUses),
+        currentUses: 0,
+        createdAt: now,
+        validUntil: new Date(expMs).toISOString(),
+        allowedVideos: allowedVideos || undefined,
+        usedVideos: [],
+      };
+      if (!Array.isArray(ctx.user.contentTokens)) ctx.user.contentTokens = [];
+      ctx.user.contentTokens.push(rec);
+      await queueSaveUsers();
+
+      return json(res, 200, {
+        ok: true,
+        id: rec.id,
+        name: rec.name,
+        maxUses: rec.maxUses,
+        currentUses: rec.currentUses,
+        createdAt: rec.createdAt,
+        validUntil: rec.validUntil,
+        allowedVideos: rec.allowedVideos || null,
+        token: makeContentTokenString(ctx.user.id, rec.id, expMs),
+      });
+    }
+
+    if (pathname === "/api/content-tokens/delete" && req.method === "POST") {
+      const ctx = authContext(req, url);
+      if (!ctx || ctx.kind !== "user") return json(res, 401, { ok: false, error: "unauthorized" });
+      const inactive = authInactiveReason(ctx);
+      if (inactive) return json(res, 403, { ok: false, error: inactive === "disabled" ? "account_disabled" : "access_expired" });
+      if (ctx.role !== "admin") return json(res, 403, { ok: false, error: "forbidden" });
+
+      const body = await readJson(req).catch(() => null);
+      const tokenId = String(body && (body.tokenId || body.id) ? body.tokenId || body.id : "").trim();
+      if (!tokenId) return json(res, 400, { ok: false, error: "bad_request" });
+
+      const tokens = Array.isArray(ctx.user.contentTokens) ? ctx.user.contentTokens : [];
+      const idx = tokens.findIndex((t) => String(t.id || "") === tokenId);
+      if (idx < 0) return json(res, 404, { ok: false, error: "not_found" });
+      tokens.splice(idx, 1);
+      ctx.user.contentTokens = tokens;
+      await queueSaveUsers();
+      return json(res, 200, { ok: true });
+    }
+
     if (pathname.startsWith("/thumb/")) {
       const ctx = authContext(req, url);
       if (!ctx) return text(res, 401, "unauthorized\n");
+      const inactive = authInactiveReason(ctx);
+      if (inactive) return text(res, 403, `${inactive === "disabled" ? "account_disabled" : "access_expired"}\n`);
       const rel = pathname.slice("/thumb/".length);
       let abs;
       let relDecoded;
@@ -691,6 +1292,10 @@ const server = http.createServer(async (req, res) => {
         ({ abs, relDecoded } = await resolveVideoFromUrlPath(rel));
       } catch (err) {
         return text(res, 400, `${err.message}\n`);
+      }
+      if (ctx.tokenInfo) {
+        const allowed = Array.isArray(ctx.tokenInfo.allowedVideos) ? ctx.tokenInfo.allowedVideos.map(String) : [];
+        if (allowed.length && !allowed.includes(relDecoded)) return text(res, 403, "forbidden\n");
       }
       const thumb = await ensureThumb(abs, relDecoded);
       const buf = await fsp.readFile(thumb);
@@ -706,6 +1311,8 @@ const server = http.createServer(async (req, res) => {
     if (pathname.startsWith("/preview/")) {
       const ctx = authContext(req, url);
       if (!ctx) return text(res, 401, "unauthorized\n");
+      const inactive = authInactiveReason(ctx);
+      if (inactive) return text(res, 403, `${inactive === "disabled" ? "account_disabled" : "access_expired"}\n`);
       const rel = pathname.slice("/preview/".length);
       let abs;
       let relDecoded;
@@ -713,6 +1320,10 @@ const server = http.createServer(async (req, res) => {
         ({ abs, relDecoded } = await resolveVideoFromUrlPath(rel));
       } catch (err) {
         return text(res, 400, `${err.message}\n`);
+      }
+      if (ctx.tokenInfo) {
+        const allowed = Array.isArray(ctx.tokenInfo.allowedVideos) ? ctx.tokenInfo.allowedVideos.map(String) : [];
+        if (allowed.length && !allowed.includes(relDecoded)) return text(res, 403, "forbidden\n");
       }
       const prev = await ensurePreview(abs, relDecoded);
       return serveFile(req, res, prev, { contentType: "video/mp4" });
@@ -723,6 +1334,8 @@ const server = http.createServer(async (req, res) => {
       const prefix = isDownload ? "/download/" : "/media/";
       const ctx = authContext(req, url);
       if (!ctx) return text(res, 401, "unauthorized\n");
+      const inactive = authInactiveReason(ctx);
+      if (inactive) return text(res, 403, `${inactive === "disabled" ? "account_disabled" : "access_expired"}\n`);
 
       const rel = pathname.slice(prefix.length);
       let abs;
@@ -731,6 +1344,32 @@ const server = http.createServer(async (req, res) => {
         ({ abs, relDecoded } = await resolveVideoFromUrlPath(rel));
       } catch (err) {
         return text(res, 400, `${err.message}\n`);
+      }
+
+      // Content token access (no login).
+      if (ctx.tokenInfo) {
+        const token = ctx.tokenInfo;
+        const allowed = Array.isArray(token.allowedVideos) ? token.allowedVideos.map(String) : [];
+        if (allowed.length && !allowed.includes(relDecoded)) return text(res, 403, "forbidden\n");
+
+        let used = Array.isArray(token.usedVideos) ? token.usedVideos : [];
+        const usedSet = new Set(used.map(String));
+
+        const maxUses = Number(token.maxUses);
+        const unlimited = Number.isFinite(maxUses) && maxUses < 0;
+
+        if (!usedSet.has(relDecoded)) {
+          if (!unlimited) {
+            if (!Number.isFinite(maxUses) || maxUses <= 0 || usedSet.size >= maxUses) return text(res, 403, "token_exhausted\n");
+          }
+          used.push(relDecoded);
+          token.usedVideos = used;
+          token.currentUses = usedSet.size + 1;
+          await queueSaveUsers();
+        }
+
+        const name = path.basename(abs);
+        return serveFile(req, res, abs, isDownload ? { downloadName: name } : {});
       }
 
       // Legacy token or admin user can access everything.
