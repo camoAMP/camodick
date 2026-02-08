@@ -1,7 +1,7 @@
 {
   // Cloudflare Workers deploy config for hosting the static UI as "assets only".
   // This does NOT deploy `server.js` (your video server still runs on your PC/container).
-  "name": "camodick-ui",
+  "name": "camodick",
   "compatibility_date": "2026-02-08",
   "assets": {
     "directory": "."
