@@ -12,7 +12,7 @@ Static web UI (GitHub Pages) + your PC serves the actual video files (not stored
 Videos live in `./videos` by default.
 
 ```bash
-cd /home/camo/Phone/DCIM/Camera/local-video-streamer
+cd camodick
 mkdir -p videos
 
 # Optional but recommended: require a token for /api/videos and /media/*
