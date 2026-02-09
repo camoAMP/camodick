@@ -698,14 +698,15 @@
 	        currentIsPreview: false,
 	        scanInProgress: false,
 	        scanSeq: 0,
-		        autoRescanMs: 15_000,
-		        toastTimer: null,
-		        thumbObserver: null,
+	        autoRescanMs: 15_000,
+	        toastTimer: null,
+	        thumbObserver: null,
+            naughtyTitleByPath: new Map(), // server + non-admin: relPath -> "Naughty Stuff ###"
             durationByPath: new Map(), // server: relPath -> durationSec
             durationQueue: [],
             durationQueued: new Set(),
             durationInFlight: 0,
-	          pingTimer: null,
+	        pingTimer: null,
 	          pingInFlight: false,
 		        adminUsers: [],
 	        contentTokens: [],
@@ -1222,6 +1223,7 @@
 
         state.videos = [];
         state.byPath = new Map();
+        state.naughtyTitleByPath = new Map();
         state.currentPath = null;
         state.currentIsPreview = false;
         el.videoCount.textContent = "0";
@@ -2743,6 +2745,7 @@
 
           const role = state.me ? String(state.me.role || "") : "";
           const isAdmin = role === "admin";
+          state.naughtyTitleByPath = new Map();
 
 	        for (let i = 0; i < state.videos.length; i++) {
             const v = state.videos[i];
@@ -2826,12 +2829,13 @@
 		          const label = document.createElement("div");
 		          label.className = "px-4 py-3";
 
-		          const titleEl = document.createElement("div");
-		          titleEl.className = "truncate font-display text-sm font-semibold tracking-wide text-zinc-100";
+              const titleEl = document.createElement("div");
+              titleEl.className = "truncate font-display text-sm font-semibold tracking-wide text-zinc-100";
               const hideNames = v.source === "server" && !isAdmin;
               const naughtyTitle = `Naughty Stuff ${String(i + 1).padStart(3, "0")}`;
-		          titleEl.textContent = hideNames ? naughtyTitle : v.name || v.path;
-		          titleEl.title = titleEl.textContent;
+              if (hideNames) state.naughtyTitleByPath.set(v.path, naughtyTitle);
+              titleEl.textContent = hideNames ? naughtyTitle : v.name || v.path;
+              titleEl.title = titleEl.textContent;
 
 		          const pathEl = document.createElement("div");
 		          pathEl.className = "mt-0.5 truncate font-mono text-[11px] leading-tight text-zinc-400/90";
@@ -2881,7 +2885,10 @@
         if (!entry) return;
         state.currentPath = path;
         state.currentIsPreview = false;
-        el.nowPlaying.textContent = path;
+        const role = state.me ? String(state.me.role || "") : "";
+        const isAdmin = role === "admin";
+        const hideNames = entry.source === "server" && !isAdmin;
+        el.nowPlaying.textContent = hideNames ? state.naughtyTitleByPath.get(path) || "Naughty Stuff" : path;
         setPlayerActions(entry);
         setViewUi();
 
