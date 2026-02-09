@@ -1609,28 +1609,24 @@
 		        }
 		      }
 
-		      async function signUp() {
-		        setError("");
-		        if (!ensureAgeOk()) return;
-		        const ok = await ensureConnectedServer();
-		        if (!ok) return;
+			      async function signUp() {
+			        setError("");
+			        if (!ensureAgeOk()) return;
+			        const ok = await ensureConnectedServer();
+			        if (!ok) return;
 
-		        const email = String(el.authUserInput.value || "").trim();
-		        const password = String(el.authPassInput.value || "");
-		        if (!email || !password) {
-		          setError("Enter email + password.");
-		          return;
-		        }
-	          if (!looksLikeEmail(email)) {
-	            setError("Enter a valid email address.");
-		          return;
-		        }
-            if (password.length < 8) {
-              setError("Password must be at least 8 characters.");
-              return;
-            }
+			        const email = String(el.authUserInput.value || "").trim();
+			        const password = String(el.authPassInput.value || "");
+			        if (!email || !password) {
+			          setError("Enter email + password.");
+			          return;
+			        }
+	            if (password.length < 8) {
+	              setError("Password must be at least 8 characters.");
+	              return;
+	            }
 
-		        setStatus("Creating account…");
+			        setStatus("Creating account…");
 		        try {
 	            const deviceId = getOrCreateDeviceId();
 	            const deviceName = getDeviceName();
