@@ -12,6 +12,7 @@ const USERS_FILE = path.join(DATA_DIR, "users.json");
 
 const ADMIN_USER = String(process.env.ADMIN_USER || process.env.ADMIN_USERNAME || "").trim();
 const ADMIN_PASS = String(process.env.ADMIN_PASS || process.env.ADMIN_PASSWORD || "");
+const ADMIN_EMAIL = String(process.env.ADMIN_EMAIL || "").trim();
 
 function usage(msg) {
   if (msg) console.error(msg);
@@ -36,6 +37,25 @@ function normalizePassword(raw) {
   return p;
 }
 
+function normalizeEmail(raw) {
+  const e = String(raw || "").trim().toLowerCase();
+  if (!e) return null;
+  if (e.length > 254) return null;
+  if (/\s/.test(e)) return null;
+  const at = e.indexOf("@");
+  if (at <= 0 || at === e.length - 1) return null;
+  const local = e.slice(0, at);
+  const domain = e.slice(at + 1);
+  if (local.length > 64) return null;
+  if (domain.length < 3) return null;
+  if (!domain.includes(".")) return null;
+  if (!/^[a-z0-9.!#$%&'*+/=?^_`{|}~-]+$/.test(local)) return null;
+  if (!/^[a-z0-9.-]+$/.test(domain)) return null;
+  if (domain.startsWith(".") || domain.endsWith(".")) return null;
+  if (domain.includes("..")) return null;
+  return e;
+}
+
 function scryptAsync(password, salt) {
   return new Promise((resolve, reject) => {
     crypto.scrypt(password, salt, 64, (err, key) => {
@@ -50,6 +70,8 @@ async function main() {
   const password = normalizePassword(ADMIN_PASS);
   if (!username) usage("Invalid ADMIN_USER (3-32 chars, letters/digits/._- only).");
   if (!password) usage("Invalid ADMIN_PASS (min 8 chars).");
+  const email = ADMIN_EMAIL ? normalizeEmail(ADMIN_EMAIL) : null;
+  if (ADMIN_EMAIL && !email) usage("Invalid ADMIN_EMAIL.");
 
   await fsp.mkdir(DATA_DIR, { recursive: true, mode: 0o700 }).catch(() => {});
 
@@ -73,6 +95,7 @@ async function main() {
     u = {
       id: crypto.randomUUID(),
       username,
+      email: email || undefined,
       role: "admin",
       salt: salt.toString("hex"),
       passHash: derived.toString("hex"),
@@ -86,6 +109,7 @@ async function main() {
     db.users.push(u);
   } else {
     u.username = username;
+    if (email) u.email = email;
     u.role = "admin";
     u.salt = salt.toString("hex");
     u.passHash = derived.toString("hex");
@@ -110,4 +134,3 @@ main().catch((err) => {
   console.error(err);
   process.exit(1);
 });
-

@@ -55,6 +55,7 @@ const USERS_FILE = path.join(DATA_DIR, "users.json");
  *   users: Array<{
  *     id:string,
  *     username:string,
+ *     email?:string,
  *     role:"admin"|"user",
  *     salt:string,
  *     passHash:string,
@@ -119,6 +120,70 @@ function queueSaveSessions() {
       console.error("Failed to save sessions:", err);
     });
   return saveSessionsChain;
+}
+
+const CHAT_FILE = path.join(DATA_DIR, "chat.json");
+/**
+ * @type {{
+ *   messages: Array<{
+ *     id: string,
+ *     ts: number,
+ *     fromUid: string,
+ *     fromUsername: string,
+ *     fromRole: "admin"|"user",
+ *     toUid: string|null,
+ *     toRole: "admin"|"user",
+ *     text: string
+ *   }>
+ * }}
+ */
+let chatDb = { messages: [] };
+try {
+  const raw = fs.readFileSync(CHAT_FILE, "utf8");
+  const parsed = JSON.parse(raw);
+  if (parsed && Array.isArray(parsed.messages)) chatDb = parsed;
+} catch {
+  // Ignore; file may not exist yet.
+}
+
+let saveChatChain = Promise.resolve();
+function queueSaveChat() {
+  const body = Buffer.from(JSON.stringify(chatDb, null, 2));
+  const tmp = `${CHAT_FILE}.tmp`;
+  saveChatChain = saveChatChain
+    .then(async () => {
+      await fsp.mkdir(DATA_DIR, { recursive: true });
+      await fsp.writeFile(tmp, body, { mode: 0o600 });
+      await fsp.rename(tmp, CHAT_FILE);
+    })
+    .catch((err) => {
+      console.error("Failed to save chat:", err);
+    });
+  return saveChatChain;
+}
+
+const chatSendRateByUid = new Map(); // uid -> { windowStartMs:number, count:number }
+function allowChatSend(uid) {
+  const now = Date.now();
+  const windowMs = 60_000;
+  const limit = 20;
+  let e = chatSendRateByUid.get(uid);
+  if (!e || now - e.windowStartMs >= windowMs) {
+    e = { windowStartMs: now, count: 0 };
+  }
+  e.count++;
+  chatSendRateByUid.set(uid, e);
+  return e.count <= limit;
+}
+
+function addChatMessage(msg) {
+  if (!chatDb || !Array.isArray(chatDb.messages)) chatDb = { messages: [] };
+  chatDb.messages.push(msg);
+  const MAX = 5000;
+  if (chatDb.messages.length > MAX) {
+    chatDb.messages.splice(0, chatDb.messages.length - MAX);
+  }
+  queueSaveChat();
 }
 
 function json(res, status, obj) {
@@ -305,6 +370,46 @@ function cleanUsername(raw) {
   if (u.length < 3 || u.length > 32) return null;
   if (!/^[a-zA-Z0-9_.-]+$/.test(u)) return null;
   return u;
+}
+
+function normalizeEmail(raw) {
+  const e = String(raw || "").trim().toLowerCase();
+  if (!e) return null;
+  if (e.length > 254) return null;
+  if (/\s/.test(e)) return null;
+  const at = e.indexOf("@");
+  if (at <= 0 || at === e.length - 1) return null;
+  const local = e.slice(0, at);
+  const domain = e.slice(at + 1);
+  if (local.length > 64) return null;
+  if (domain.length < 3) return null;
+  if (!domain.includes(".")) return null;
+  if (!/^[a-z0-9.!#$%&'*+/=?^_`{|}~-]+$/.test(local)) return null;
+  if (!/^[a-z0-9.-]+$/.test(domain)) return null;
+  if (domain.startsWith(".") || domain.endsWith(".")) return null;
+  if (domain.includes("..")) return null;
+  return e;
+}
+
+function isEmailLike(raw) {
+  return String(raw || "").includes("@");
+}
+
+function deriveUsernameFromEmail(email) {
+  const e = normalizeEmail(email);
+  if (!e) return null;
+  const local = e.split("@")[0];
+  // Convert to allowed username chars.
+  let base = local
+    .toLowerCase()
+    .replace(/[^a-z0-9_.-]+/g, "")
+    .replace(/^[_.-]+/, "")
+    .replace(/[_.-]+$/, "");
+
+  if (base.length < 3) base = "user";
+  if (base.length > 32) base = base.slice(0, 32);
+  base = cleanUsername(base) || "user";
+  return base;
 }
 
 function normalizePassword(raw) {
@@ -711,12 +816,39 @@ const server = http.createServer(async (req, res) => {
     if (pathname === "/api/auth/signup" && req.method === "POST") {
       if (!SIGNUP_ENABLED) return json(res, 403, { ok: false, error: "signup_disabled" });
       const body = await readJson(req).catch(() => null);
-      const username = cleanUsername(body && body.username);
       const password = normalizePassword(body && body.password);
-      if (!username || !password) return json(res, 400, { ok: false, error: "bad_request" });
+      if (!password) return json(res, 400, { ok: false, error: "bad_request" });
+
+      const rawEmail = body && Object.prototype.hasOwnProperty.call(body, "email") ? body.email : null;
+      const rawUsername = body && Object.prototype.hasOwnProperty.call(body, "username") ? body.username : null;
+      const wantsEmail = String(rawEmail || "").trim() ? true : false;
+      const email = wantsEmail ? normalizeEmail(rawEmail) : null;
+      if (wantsEmail && !email) return json(res, 400, { ok: false, error: "bad_email" });
+
+      const usernameProvided = String(rawUsername || "").trim() ? true : false;
+      let username = cleanUsername(rawUsername);
+      if (!username && email) username = deriveUsernameFromEmail(email);
+      if (!username) return json(res, 400, { ok: false, error: "bad_request" });
+
+      if (email && usersDb.users.some((u) => String(u.email || "").toLowerCase() === email)) {
+        return json(res, 409, { ok: false, error: "email_taken" });
+      }
 
       if (usersDb.users.some((u) => u.username.toLowerCase() === username.toLowerCase())) {
-        return json(res, 409, { ok: false, error: "username_taken" });
+        if (usernameProvided) return json(res, 409, { ok: false, error: "username_taken" });
+        const base = username;
+        for (let i = 1; i <= 999; i++) {
+          const suffix = `_${i}`;
+          const trimmed = base.length + suffix.length > 32 ? base.slice(0, 32 - suffix.length) : base;
+          const cand = `${trimmed}${suffix}`;
+          if (!usersDb.users.some((u) => u.username.toLowerCase() === cand.toLowerCase())) {
+            username = cand;
+            break;
+          }
+        }
+        if (usersDb.users.some((u) => u.username.toLowerCase() === username.toLowerCase())) {
+          return json(res, 409, { ok: false, error: "username_taken" });
+        }
       }
 
       const salt = crypto.randomBytes(16);
@@ -726,6 +858,7 @@ const server = http.createServer(async (req, res) => {
       const user = {
         id: crypto.randomUUID(),
         username,
+        email: email || undefined,
         role,
         salt: salt.toString("hex"),
         passHash: derived.toString("hex"),
@@ -742,16 +875,26 @@ const server = http.createServer(async (req, res) => {
       const session = createSessionForUser(user, { deviceId: body && body.deviceId, deviceName: body && body.deviceName, req });
       await queueSaveSessions();
       const auth = makeAuthToken(user, session.id);
-      return json(res, 200, { ok: true, user: { username: user.username, role: user.role, quota: user.quota }, auth });
+      return json(res, 200, { ok: true, user: { username: user.username, email: user.email || "", role: user.role, quota: user.quota }, auth });
     }
 
     if (pathname === "/api/auth/login" && req.method === "POST") {
       const body = await readJson(req).catch(() => null);
-      const username = cleanUsername(body && body.username);
       const password = normalizePassword(body && body.password);
-      if (!username || !password) return json(res, 400, { ok: false, error: "bad_request" });
+      const identifierRaw = String((body && (body.identifier ?? body.email ?? body.username)) || "").trim();
+      if (!identifierRaw || !password) return json(res, 400, { ok: false, error: "bad_request" });
 
-      const user = usersDb.users.find((u) => u.username.toLowerCase() === username.toLowerCase());
+      /** @type {any} */
+      let user = null;
+      if (isEmailLike(identifierRaw)) {
+        const email = normalizeEmail(identifierRaw);
+        if (!email) return json(res, 400, { ok: false, error: "bad_request" });
+        user = usersDb.users.find((u) => String(u.email || "").toLowerCase() === email) || null;
+      } else {
+        const username = cleanUsername(identifierRaw);
+        if (!username) return json(res, 400, { ok: false, error: "bad_request" });
+        user = usersDb.users.find((u) => u.username.toLowerCase() === username.toLowerCase()) || null;
+      }
       if (!user) return json(res, 401, { ok: false, error: "invalid_credentials" });
       const ok = await verifyPassword(user, password).catch(() => false);
       if (!ok) return json(res, 401, { ok: false, error: "invalid_credentials" });
@@ -762,7 +905,7 @@ const server = http.createServer(async (req, res) => {
       const session = createSessionForUser(user, { deviceId: body && body.deviceId, deviceName: body && body.deviceName, req });
       await queueSaveSessions();
       const auth = makeAuthToken(user, session.id);
-      return json(res, 200, { ok: true, user: { username: user.username, role: user.role, quota: user.quota }, auth });
+      return json(res, 200, { ok: true, user: { username: user.username, email: user.email || "", role: user.role, quota: user.quota }, auth });
     }
 
     if (pathname === "/api/me") {
@@ -778,6 +921,7 @@ const server = http.createServer(async (req, res) => {
         inactive: authInactiveReason(ctx),
         user: {
           username: u.username,
+          email: u.email || "",
           role: u.role,
           quota: u.quota,
           unlockedCount: Array.isArray(u.unlocked) ? u.unlocked.length : 0,
@@ -821,6 +965,7 @@ const server = http.createServer(async (req, res) => {
         auth: refreshedAuth || undefined,
         user: {
           username: u.username,
+          email: u.email || "",
           role: u.role,
           quota: u.quota,
           unlockedCount: Array.isArray(u.unlocked) ? u.unlocked.length : 0,
@@ -830,6 +975,67 @@ const server = http.createServer(async (req, res) => {
         },
         session: session ? { id: session.id, deviceId: session.deviceId || "", deviceName: session.deviceName || "" } : null,
       });
+    }
+
+    if (pathname === "/api/chat/history") {
+      const ctx = authContext(req, url);
+      if (!ctx || ctx.kind !== "user") return json(res, 401, { ok: false, error: "unauthorized" });
+      const inactive = authInactiveReason(ctx);
+      if (inactive) return json(res, 403, { ok: false, error: inactive === "disabled" ? "account_disabled" : "access_expired" });
+
+      const limitRaw = Number(url.searchParams.get("limit") || 60);
+      const limit = Number.isFinite(limitRaw) ? Math.max(1, Math.min(200, Math.floor(limitRaw))) : 60;
+      const uid = ctx.user.id;
+      const all = Array.isArray(chatDb.messages) ? chatDb.messages : [];
+      const filtered = all.filter((m) => m && (m.fromUid === uid || m.toUid === uid)).sort((a, b) => (a.ts || 0) - (b.ts || 0));
+      const messages = filtered
+        .slice(-limit)
+        .map((m) => ({ id: m.id, ts: m.ts, fromRole: m.fromRole, fromUsername: m.fromUsername, text: m.text }));
+      return json(res, 200, { ok: true, messages, now: Date.now() });
+    }
+
+    if (pathname === "/api/chat/updates") {
+      const ctx = authContext(req, url);
+      if (!ctx || ctx.kind !== "user") return json(res, 401, { ok: false, error: "unauthorized" });
+      const inactive = authInactiveReason(ctx);
+      if (inactive) return json(res, 403, { ok: false, error: inactive === "disabled" ? "account_disabled" : "access_expired" });
+
+      const sinceRaw = Number(url.searchParams.get("since") || 0);
+      const since = Number.isFinite(sinceRaw) ? Math.max(0, Math.floor(sinceRaw)) : 0;
+      const uid = ctx.user.id;
+      const all = Array.isArray(chatDb.messages) ? chatDb.messages : [];
+      const messages = all
+        .filter((m) => m && (m.fromUid === uid || m.toUid === uid) && typeof m.ts === "number" && m.ts > since)
+        .sort((a, b) => (a.ts || 0) - (b.ts || 0))
+        .slice(0, 200)
+        .map((m) => ({ id: m.id, ts: m.ts, fromRole: m.fromRole, fromUsername: m.fromUsername, text: m.text }));
+      return json(res, 200, { ok: true, messages, now: Date.now() });
+    }
+
+    if (pathname === "/api/chat/send" && req.method === "POST") {
+      const ctx = authContext(req, url);
+      if (!ctx || ctx.kind !== "user") return json(res, 401, { ok: false, error: "unauthorized" });
+      const inactive = authInactiveReason(ctx);
+      if (inactive) return json(res, 403, { ok: false, error: inactive === "disabled" ? "account_disabled" : "access_expired" });
+      if (String(ctx.user.role || "") === "admin") return json(res, 403, { ok: false, error: "forbidden" });
+
+      const body = await readJson(req).catch(() => null);
+      const textRaw = String(body && body.text ? body.text : "").trim();
+      if (!textRaw) return json(res, 400, { ok: false, error: "bad_request" });
+      if (textRaw.length > 2000) return json(res, 400, { ok: false, error: "too_long" });
+      if (!allowChatSend(ctx.user.id)) return json(res, 429, { ok: false, error: "rate_limited" });
+
+      addChatMessage({
+        id: crypto.randomUUID(),
+        ts: Date.now(),
+        fromUid: ctx.user.id,
+        fromUsername: ctx.user.username,
+        fromRole: ctx.user.role,
+        toUid: null,
+        toRole: "admin",
+        text: textRaw,
+      });
+      return json(res, 200, { ok: true });
     }
 
     if (pathname === "/api/videos") {
@@ -885,6 +1091,7 @@ const server = http.createServer(async (req, res) => {
         videos: list,
         user: {
           username: ctx.user.username,
+          email: ctx.user.email || "",
           role: ctx.user.role,
           quota: ctx.user.quota,
           unlockedCount: unlockedSet.size,
@@ -942,6 +1149,7 @@ const server = http.createServer(async (req, res) => {
       const users = usersDb.users
         .map((u) => ({
           username: u.username,
+          email: u.email || "",
           role: u.role,
           quota: u.quota,
           unlockedCount: Array.isArray(u.unlocked) ? u.unlocked.length : 0,
@@ -1056,6 +1264,7 @@ const server = http.createServer(async (req, res) => {
           return {
             id: s.id,
             username: u ? u.username : "(deleted)",
+            email: u ? u.email || "" : "",
             uid: s.uid,
             deviceId: s.deviceId || "",
             deviceName: s.deviceName || "",
@@ -1074,6 +1283,156 @@ const server = http.createServer(async (req, res) => {
           return bm - am;
         });
       return json(res, 200, { ok: true, sessions });
+    }
+
+    if (pathname === "/api/admin/chat/threads") {
+      const ctx = authContext(req, url);
+      if (!ctx) return json(res, 401, { ok: false, error: "unauthorized" });
+      const inactive = authInactiveReason(ctx);
+      if (inactive) return json(res, 403, { ok: false, error: inactive === "disabled" ? "account_disabled" : "access_expired" });
+      if (!(ctx.kind === "legacy" || ctx.role === "admin")) return json(res, 403, { ok: false, error: "forbidden" });
+
+      const all = Array.isArray(chatDb.messages) ? chatDb.messages : [];
+      const byUid = new Map(); // uid -> {uid,lastTs,lastText,lastFromRole,lastFromUsername}
+      for (const m of all) {
+        if (!m || typeof m.ts !== "number") continue;
+        let uid = null;
+        if (m.fromRole === "user" && typeof m.fromUid === "string") uid = m.fromUid;
+        else if (m.toRole === "user" && typeof m.toUid === "string") uid = m.toUid;
+        if (!uid) continue;
+        const cur = byUid.get(uid) || { uid, lastTs: 0, lastText: "", lastFromRole: "", lastFromUsername: "" };
+        if (m.ts >= cur.lastTs) {
+          cur.lastTs = m.ts;
+          cur.lastText = String(m.text || "");
+          cur.lastFromRole = String(m.fromRole || "");
+          cur.lastFromUsername = String(m.fromUsername || "");
+        }
+        byUid.set(uid, cur);
+      }
+
+      const nowMs = Date.now();
+      const onlineWindowMs = 60_000;
+      function isOnline(uid) {
+        for (const s of sessionsDb.sessions) {
+          if (!s || s.uid !== uid) continue;
+          if (s.revokedAt) continue;
+          const lastSeenMs = s.lastSeenAt ? Date.parse(s.lastSeenAt) : 0;
+          if (lastSeenMs && nowMs - lastSeenMs <= onlineWindowMs) return true;
+        }
+        return false;
+      }
+
+      const uids = new Set();
+      for (const u of usersDb.users) {
+        if (!u || typeof u.id !== "string") continue;
+        if (String(u.role || "") === "admin") continue;
+        uids.add(u.id);
+      }
+      for (const uid of byUid.keys()) uids.add(uid);
+
+      const threads = [...uids]
+        .map((uid) => {
+          const t = byUid.get(uid) || { uid, lastTs: 0, lastText: "", lastFromRole: "", lastFromUsername: "" };
+          const u = usersDb.users.find((x) => x.id === uid) || null;
+          return {
+            uid,
+            username: u ? u.username : "(deleted)",
+            email: u ? u.email || "" : "",
+            online: isOnline(uid),
+            lastTs: t.lastTs,
+            lastFromRole: t.lastFromRole,
+            lastFromUsername: t.lastFromUsername,
+            lastText: t.lastText.length > 300 ? t.lastText.slice(0, 300) : t.lastText,
+          };
+        })
+        .sort((a, b) => {
+          if (a.online !== b.online) return a.online ? -1 : 1;
+          if (a.lastTs !== b.lastTs) return b.lastTs - a.lastTs;
+          return String(a.username || "").localeCompare(String(b.username || ""));
+        });
+
+      return json(res, 200, { ok: true, threads, now: Date.now() });
+    }
+
+    if (pathname === "/api/admin/chat/history") {
+      const ctx = authContext(req, url);
+      if (!ctx) return json(res, 401, { ok: false, error: "unauthorized" });
+      const inactive = authInactiveReason(ctx);
+      if (inactive) return json(res, 403, { ok: false, error: inactive === "disabled" ? "account_disabled" : "access_expired" });
+      if (!(ctx.kind === "legacy" || ctx.role === "admin")) return json(res, 403, { ok: false, error: "forbidden" });
+
+      const uid = sanitizeDeviceField(url.searchParams.get("uid"), 80);
+      if (!uid) return json(res, 400, { ok: false, error: "bad_request" });
+      const limitRaw = Number(url.searchParams.get("limit") || 120);
+      const limit = Number.isFinite(limitRaw) ? Math.max(1, Math.min(500, Math.floor(limitRaw))) : 120;
+
+      const u = usersDb.users.find((x) => x.id === uid) || null;
+      const all = Array.isArray(chatDb.messages) ? chatDb.messages : [];
+      const filtered = all.filter((m) => m && (m.fromUid === uid || m.toUid === uid)).sort((a, b) => (a.ts || 0) - (b.ts || 0));
+      const messages = filtered
+        .slice(-limit)
+        .map((m) => ({ id: m.id, ts: m.ts, fromRole: m.fromRole, fromUsername: m.fromUsername, text: m.text }));
+
+      return json(res, 200, {
+        ok: true,
+        user: { uid, username: u ? u.username : "(deleted)", email: u ? u.email || "" : "" },
+        messages,
+        now: Date.now(),
+      });
+    }
+
+    if (pathname === "/api/admin/chat/updates") {
+      const ctx = authContext(req, url);
+      if (!ctx) return json(res, 401, { ok: false, error: "unauthorized" });
+      const inactive = authInactiveReason(ctx);
+      if (inactive) return json(res, 403, { ok: false, error: inactive === "disabled" ? "account_disabled" : "access_expired" });
+      if (!(ctx.kind === "legacy" || ctx.role === "admin")) return json(res, 403, { ok: false, error: "forbidden" });
+
+      const uid = sanitizeDeviceField(url.searchParams.get("uid"), 80);
+      if (!uid) return json(res, 400, { ok: false, error: "bad_request" });
+      const sinceRaw = Number(url.searchParams.get("since") || 0);
+      const since = Number.isFinite(sinceRaw) ? Math.max(0, Math.floor(sinceRaw)) : 0;
+
+      const all = Array.isArray(chatDb.messages) ? chatDb.messages : [];
+      const messages = all
+        .filter((m) => m && (m.fromUid === uid || m.toUid === uid) && typeof m.ts === "number" && m.ts > since)
+        .sort((a, b) => (a.ts || 0) - (b.ts || 0))
+        .slice(0, 500)
+        .map((m) => ({ id: m.id, ts: m.ts, fromRole: m.fromRole, fromUsername: m.fromUsername, text: m.text }));
+
+      return json(res, 200, { ok: true, messages, now: Date.now() });
+    }
+
+    if (pathname === "/api/admin/chat/send" && req.method === "POST") {
+      const ctx = authContext(req, url);
+      if (!ctx) return json(res, 401, { ok: false, error: "unauthorized" });
+      const inactive = authInactiveReason(ctx);
+      if (inactive) return json(res, 403, { ok: false, error: inactive === "disabled" ? "account_disabled" : "access_expired" });
+      if (!(ctx.kind === "legacy" || ctx.role === "admin")) return json(res, 403, { ok: false, error: "forbidden" });
+
+      const body = await readJson(req).catch(() => null);
+      const uid = sanitizeDeviceField(body && body.uid, 80);
+      const textRaw = String(body && body.text ? body.text : "").trim();
+      if (!uid || !textRaw) return json(res, 400, { ok: false, error: "bad_request" });
+      if (textRaw.length > 2000) return json(res, 400, { ok: false, error: "too_long" });
+
+      const target = usersDb.users.find((u) => u.id === uid) || null;
+      if (!target) return json(res, 404, { ok: false, error: "not_found" });
+
+      const fromUid = ctx.kind === "user" ? ctx.user.id : "legacy";
+      const fromUsername = ctx.kind === "user" ? ctx.user.username : "legacy-admin";
+      addChatMessage({
+        id: crypto.randomUUID(),
+        ts: Date.now(),
+        fromUid,
+        fromUsername,
+        fromRole: "admin",
+        toUid: target.id,
+        toRole: "user",
+        text: textRaw,
+      });
+
+      return json(res, 200, { ok: true });
     }
 
     if (pathname === "/api/admin/revoke-session" && req.method === "POST") {

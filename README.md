@@ -94,6 +94,7 @@ Once that’s active, users just open your domain and sign in.
 
 - Admin login URL: `/admin` (example: `https://videos.cptcommunityadults.fun/admin`)
 - Sign-up is on `/` (the first account created becomes admin)
+- User sign-in/sign-up is **email + password** (username is generated automatically)
 
 ## Accounts + Quotas
 
@@ -101,6 +102,7 @@ Once that’s active, users just open your domain and sign in.
 - The **first** account created becomes **admin**.
 - Admin can set a **quota (videos)** for each user.
 - Locked videos show **thumbnails** and a **10s preview**; users must **unlock** to watch/download full.
+- Admin can see **online sessions/devices** and use the built-in **chat** to message users.
 
 ## Content Access Tokens (New Feature)
 
